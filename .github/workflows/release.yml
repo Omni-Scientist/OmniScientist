@@ -194,23 +194,24 @@ jobs:
           generate_release_notes: true
           files: release/*
           body: |
-            ## 装
+            ## Install
 
-            粘一行到 Claude Code、Cursor、Codex，或者任何有 shell 的 agent 里，它会读安装
-            文档，把该装的装好，然后告诉你装了什么。
+            Paste this into Claude Code, Cursor, Codex, or anything else with a shell. The
+            agent reads the setup document and installs it for you.
 
             ```text
             Read https://omni-scientist.github.io/setup/install.md and install and configure the OmniScientist skill for this agent, following the steps.
             ```
 
-            桌面版和命令行版的口令在 <https://omni-scientist.github.io/>。
+            For the desktop app or the terminal agent, get the line for your machine at
+            <https://omni-scientist.github.io/>.
 
-            ## 包
+            ## Downloads
 
-            | 下这个 | 得到 |
+            | File | What it is |
             |---|---|
-            | `OmniScientist-*-windows-x64.zip`、`OmniScientist-macos-*.tar.gz`、`OmniScientist-linux-*.tar.gz` | 桌面工作台 |
-            | `omnisci-windows-x86_64.exe`、`omnisci-darwin-*`、`omnisci-linux-*` | 命令行 agent |
-            | `omnisci-skill.zip` | skill，解到 `~/.claude/skills/` |
+            | `OmniScientist-*-windows-x64.zip`, `OmniScientist-macos-*.tar.gz`, `OmniScientist-linux-*.tar.gz` | Desktop workbench |
+            | `omnisci-windows-x86_64.exe`, `omnisci-darwin-*`, `omnisci-linux-*` | Terminal agent |
+            | `omnisci-skill.zip` | Skill, unpack into `~/.claude/skills/` |
 
-            校验：`sha256sum -c SHA256SUMS`
+            Verify with `sha256sum -c SHA256SUMS`.
