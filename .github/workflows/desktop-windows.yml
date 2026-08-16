@@ -133,10 +133,24 @@ jobs:
             desktop/packaging/windows/dist/*.sha256
           if-no-files-found: error
 
+      # release.yml 也被同一个 tag 触发，但它要等所有矩阵 job（含排队很久的 Intel mac）
+      # 跑完才建 release。Windows 这边一分钟就编完，先到一步就撞上 "release not found"。
+      # 所以这里自己兜底：没有就先建一个草稿，谁先到谁建，另一边用 --clobber 覆盖同名资产。
       - name: Attach to the release
         if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload $env:GITHUB_REF_NAME (Get-ChildItem desktop\packaging\windows\dist\*.zip, desktop\packaging\windows\dist\*.sha256 | ForEach-Object { $_.FullName }) --clobber
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "release $tag 还不存在，先建一个草稿"
+            gh release create $tag --draft --title "OmniScientist $($tag -replace '^v', '')" --notes ""
+            if ($LASTEXITCODE -ne 0) { throw "建 release $tag 失败" }
+          }
+          $files = Get-ChildItem desktop\packaging\windows\dist\*.zip, desktop\packaging\windows\dist\*.sha256 |
+                   ForEach-Object { $_.FullName }
+          if (-not $files) { throw "没有可上传的产物" }
+          gh release upload $tag $files --clobber
+          if ($LASTEXITCODE -ne 0) { throw "上传到 release $tag 失败" }
