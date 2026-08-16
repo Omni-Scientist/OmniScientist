@@ -43,7 +43,6 @@ jobs:
           - { runner: ubuntu-latest,    asset: omnisci-linux-x86_64 }
           - { runner: ubuntu-24.04-arm, asset: omnisci-linux-arm64 }
           - { runner: macos-latest,     asset: omnisci-darwin-arm64 }
-          - { runner: macos-13,         asset: omnisci-darwin-x86_64 }
           - { runner: windows-latest,   asset: omnisci-windows-x86_64.exe }
     runs-on: ${{ matrix.runner }}
     # ARM Linux runner 在私有仓库上不免费，缺了不该拖垮整个发布
@@ -112,7 +111,6 @@ jobs:
           - { runner: ubuntu-latest,    os: linux,  arch: x86_64 }
           - { runner: ubuntu-24.04-arm, os: linux,  arch: arm64 }
           - { runner: macos-latest,     os: macos,  arch: arm64 }
-          - { runner: macos-13,         os: macos,  arch: x86_64 }
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.runner == 'ubuntu-24.04-arm' }}
     steps:
