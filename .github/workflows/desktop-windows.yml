@@ -31,6 +31,11 @@ concurrency:
   group: desktop-windows-${{ github.ref }}
   cancel-in-progress: true
 
+# 建 release、往上传产物都要写权限。仓库默认给 Actions 的是只读，
+# 不声明就是 403 Resource not accessible by integration。
+permissions:
+  contents: write
+
 jobs:
   build:
     name: OmniScientist.exe
