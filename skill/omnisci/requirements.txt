@@ -1,0 +1,11 @@
+# core: the evidence layer, the figures, the assembler
+numpy
+pandas
+matplotlib
+# specialist tools, each used by one modality
+sympy          # check_math
+imageio        # look_at_video
+soundfile      # look_at_audio
+# your analysis scripts will usually want these too
+scipy
+scikit-learn

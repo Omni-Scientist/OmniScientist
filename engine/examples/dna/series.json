@@ -1,0 +1,14 @@
+{
+ "role": "a computational / regulatory-genomics researcher analyzing labeled DNA sequences",
+ "subject": "a DNA nucleotide sequence (fixed length, alphabet A/C/G/T)",
+ "property": "a binary label associated with each sequence (task 'H3' = a histone-mark / chromatin-occupancy classification benchmark)",
+ "request": "Each row is a 500-base-pair DNA nucleotide sequence (alphabet A/C/G/T) with a binary label (0/1) and a task identifier; every row here belongs to the 'H3' task -- a histone-modification / chromatin-occupancy classification benchmark in which label 1 marks sequences whose genomic region is positive for the H3 histone mark and label 0 marks negatives. Find a concrete, novel, testable question these labeled sequences can answer, decide your own method, run real code on the sequences, and produce a short publishable paper.",
+ "data": {
+  "n_items": 10000,
+  "files": {
+   "DNA_CSV": "data/dna.csv"
+  },
+  "schema": "DNA_CSV (dna.csv): 10000 rows x 3 columns. 'sequence' = a DNA string of 500 nucleotides over the alphabet {A,C,G,T}; 'label' = binary class (int 0 or 1); 'task' = benchmark task identifier (string; all rows = 'H3').",
+  "summary": "DATASET: labeled DNA sequences for a histone-mark classification benchmark ('H3' task).\n  n_items = 10000 rows, each an independent example (no train/test split column is provided here).\n  sequence: fixed length = 500 bp (min=500, max=500), alphabet strictly {A,C,G,T}.\n  label: binary; COMPUTED balance from the real data -> {\"1\": 5145, \"0\": 4855} (roughly balanced).\n  task: all rows = {\"H3\": 10000} (single-task file).\n  INTERPRETATION: task 'H3' is a chromatin/epigenetic classification benchmark; a positive label means the sequence's genomic region carries the H3 histone mark, a negative label means it does not. The only signal available is the raw nucleotide sequence itself."
+ }
+}

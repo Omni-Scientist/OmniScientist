@@ -1,0 +1,57 @@
+{
+ "role": "a bioacoustics researcher analysing field audio recordings",
+ "subject": "a 10-second field audio recording (freefield1010 collection), sampled at 44.1 kHz, capturing an outdoor acoustic scene",
+ "property": "whether any bird vocalisation is present in the clip (label hasbird: 1 = at least one bird audible, 0 = no bird), plus whatever ambient sound the recording contains",
+ "request": "These are 2000 ten-second field recordings (freefield1010), each tagged hasbird = 0 or 1 for the presence of any bird call. Find a concrete, novel, testable question these audio recordings can answer, decide your own method, run real code, and produce a short publishable paper.",
+ "members": [
+  {
+   "idx": 0,
+   "file": "data/104.wav",
+   "modality": "audio",
+   "label": 0,
+   "itemid": "104"
+  },
+  {
+   "idx": 1,
+   "file": "data/347.wav",
+   "modality": "audio",
+   "label": 0,
+   "itemid": "347"
+  },
+  {
+   "idx": 2,
+   "file": "data/371.wav",
+   "modality": "audio",
+   "label": 0,
+   "itemid": "371"
+  },
+  {
+   "idx": 3,
+   "file": "data/518.wav",
+   "modality": "audio",
+   "label": 1,
+   "itemid": "518"
+  },
+  {
+   "idx": 4,
+   "file": "data/1050.wav",
+   "modality": "audio",
+   "label": 1,
+   "itemid": "1050"
+  },
+  {
+   "idx": 5,
+   "file": "data/1054.wav",
+   "modality": "audio",
+   "label": 1,
+   "itemid": "1054"
+  }
+ ],
+ "_demo": {
+  "included": true,
+  "members": 6,
+  "full_members": 2000,
+  "selection": "first 3 clips per has-bird label",
+  "purpose": "interface and perception smoke test; not the full paper evaluation"
+ }
+}

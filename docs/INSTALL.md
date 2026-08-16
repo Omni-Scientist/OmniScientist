@@ -1,0 +1,272 @@
+# Installing OmniScientist
+
+Four editions, three platforms. Pick the edition first; the platform rarely changes
+anything.
+
+| Edition | What you get | Needs an API key |
+|---|---|:--:|
+| [skill](#skill) | OmniScientist inside Claude Code | no |
+| [cli](#cli) | a terminal agent, one executable | yes |
+| [desktop](#desktop) | a browser workspace, double-click to start | yes |
+| [engine](#engine) | the reference implementation the paper reports | yes |
+
+Everything below assumes you also want PDFs at the end. See
+[runtime dependencies](#runtime-dependencies) for that part; it is the same for all
+four and it is the step people miss.
+
+---
+
+## skill
+
+No API key: your own Claude Code session does the perceiving and the writing.
+
+```bash
+curl -fsSL -o omnisci-skill.zip \
+  https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip
+unzip omnisci-skill.zip -d ~/.claude/skills/
+pip install -r ~/.claude/skills/omnisci/requirements.txt
+```
+
+Or from a clone, which is the same directory:
+
+```bash
+cp -r skill/omnisci ~/.claude/skills/
+```
+
+Check it:
+
+```bash
+python3 ~/.claude/skills/omnisci/bin/case_cli.py inspect --dir <any folder of data>
+```
+
+It should print the modalities and labels it found. Then start a session and say what
+you want, for example *"I have a folder of microscope images in `~/slides`, make me a
+paper"*. The skill is selected by its description, or invoke it as `/omnisci`.
+
+---
+
+## cli
+
+One executable. The skill travels inside it and is written out to the application
+data directory the first time it runs, so there is nothing to unpack and no layout to
+keep intact.
+
+### macOS and Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh
+```
+
+It puts `omnisci` in `~/.local/bin`. `BIN_DIR=/usr/local/bin` to put it elsewhere,
+`VERSION=v0.1.0` to pin a release.
+
+On Apple Silicon the installer ad-hoc signs the binary, because the kernel refuses to
+execute an unsigned one. That is unrelated to Gatekeeper: a file fetched with `curl`
+never carries the quarantine attribute, so Gatekeeper is never consulted.
+
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex
+```
+
+**The Windows build is produced by CI and has not been run by anyone on Windows.**
+It compiles, and the code paths it needs (data directory, browser launch, path
+handling) are written for it, but "written for it" is not "tested". If you try it,
+what would help most is: does `omnisci --help` run, does the skill land under
+`%LOCALAPPDATA%\OmniScientist`, and does a paper run finish. Say so either way.
+
+### Without the installer
+
+Download `omnisci-<os>-<arch>` from
+[Releases](https://github.com/Omni-Scientist/OmniScientist/releases), `chmod +x` it,
+and put it on your `PATH`. That is the whole install.
+
+### Credentials
+
+`~/.omnisci/env`, one `KEY=VALUE` per line (`%USERPROFILE%\.omnisci\env` on Windows):
+
+```
+DEEPSEEK_API_KEY=...
+ANTHROPIC_API_KEY=...
+```
+
+The file is parsed strictly as data, never sourced as shell. An optional `export`
+prefix and matching quotes are accepted; anything else makes the whole file be
+ignored rather than half-read. The values are removed from the environment at startup
+so the analysis scripts and shell commands the agent runs do not inherit them.
+
+The perception sidecar is a second model: the DeepSeek endpoint takes text only, so
+pixels go to a vision model that returns a bounded observation. Text-only work does not
+need one. It defaults to `claude-sonnet-5` on `ANTHROPIC_API_KEY`; set
+`OMNISCI_VISION_PROVIDER`, `OMNISCI_VISION_MODEL` and, for a custom endpoint,
+`OMNISCI_VISION_BASE_URL` to move it. `gpt-5.6-luna` on `OPENAI_API_KEY` is the cheap
+alternative at $0.20 / $1.20 per million tokens. In the desktop build both are picked
+from the settings dialog, which sends a real test image before saving.
+
+For any other OpenAI-compatible endpoint as the backbone, set `OMNISCI_BASE_URL`,
+`OMNISCI_API_KEY` and `OMNISCI_MODEL` instead.
+
+---
+
+## desktop
+
+A local service plus your own browser. Not a native window: it opens the browser you
+already use.
+
+### macOS
+
+```bash
+curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniScientist-macos-arm64.tar.gz \
+  | tar -xz -C /Applications
+```
+
+Then open it from Launchpad or Applications. A menu-bar icon appears; the browser
+opens by itself. Quit from the menu-bar item.
+
+Install through the terminal rather than a browser download: the quarantine attribute
+is set by the *downloader*, and `curl` does not set it, so Gatekeeper never gets
+involved. If you do download the tarball in a browser, macOS 15 and later will block
+the first launch and the way through is System Settings, Privacy & Security, "Open
+Anyway" (the old Control-click shortcut was removed in Sequoia).
+
+Verified on macOS 15.7.7 / M3: install, launch, menu bar, quit, relaunch, single
+instance, loopback-only binding, token handling, and signature. The end-to-end paper
+run on macOS has not been done.
+
+### Linux
+
+```bash
+curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniScientist-linux-x86_64.tar.gz | tar -xz
+cd OmniScientist-*-linux-*
+./install.sh          # per-user, no root; adds a menu entry and an icon
+```
+
+Then launch it from the application menu, or run `omnisci-desktop`. `./install.sh
+--uninstall` removes exactly what it added.
+
+### Windows
+
+Not packaged. The launcher has the Windows code paths, but there is no `.exe`
+packaging and nothing has been verified, so it is not in the release. Use the CLI.
+
+### What it does at startup
+
+Binds `127.0.0.1` only, takes a free port, generates a one-time token, and hands the
+browser that token once in the URL. The server immediately exchanges it for an
+`HttpOnly` `SameSite=Strict` cookie and redirects, so the token does not stay in the
+address bar or in history. A lock file at `~/.omnisci/desktop.lock` keeps a second
+launch from starting a second service. Logs are under `~/.omnisci/logs/`.
+
+Credentials are the same `~/.omnisci/env` as the CLI. Without them it still starts and
+the interface offers to set them.
+
+---
+
+## engine
+
+The implementation the technical report describes. Use it when you want a run to be
+scriptable and reproducible rather than conversational.
+
+```bash
+git clone git@github.com:Omni-Scientist/OmniScientist.git
+cd OmniScientist
+python -m venv .venv && source .venv/bin/activate
+pip install -r engine/requirements.txt
+
+export OMNIST_MODEL=claude-sonnet-5
+export ANTHROPIC_API_KEY=sk-ant-...
+python engine/omniscientist/agentic.py --task galaxy_xsurvey --stage run
+```
+
+`pipeline.py` reads the model name from `OMNIST_MODEL` and picks the transport, so
+you supply your own URL and key. Nothing is hardcoded.
+
+| `OMNIST_MODEL` | Transport | Environment |
+|---|---|---|
+| `gpt-5.6`, `o3`, ... | OpenAI official, with prompt caching | `OPENAI_API_KEY` |
+| `claude-sonnet-5`, ... | Anthropic official | `ANTHROPIC_API_KEY` |
+| `or/<vendor>/<model>` | OpenRouter | `OPENROUTER_API_KEY` |
+| `local/<name>` | your vLLM or sglang server | `OMNIST_LOCAL_URL`, `OMNIST_LOCAL_KEY` |
+| anything else | your own OpenAI-compatible gateway | `OMNIST_GATEWAY_URL`, `OMNIST_GATEWAY_KEY` |
+
+`OMNIST_PERCEIVER` gives vision its own model while another backbone reasons, for
+example `OMNIST_PERCEIVER=gpt-5.6-luna` alongside a Claude backbone. The sample papers
+were produced with `claude-sonnet-5` doing both. Full reference in
+[`USAGE.md`](USAGE.md).
+
+---
+
+## Runtime dependencies
+
+Two things live outside the binaries, and a run needs both to reach a PDF.
+
+**Python 3.10 or newer**, with numpy, pandas, matplotlib, scipy, scikit-learn, sympy,
+imageio and soundfile. The exact list is `skill/omnisci/requirements.txt`.
+
+**[tectonic](https://tectonic-typesetting.github.io/)**, which compiles the LaTeX.
+Without it a run still produces the `.tex`, says so, and stops there. Everything
+before that step works.
+
+The desktop edition can install both for you: it checks on startup and offers to put
+them under its own data directory, touching nothing else. The other three expect you
+to have them.
+
+Installing tectonic by hand:
+
+```bash
+# x86_64
+curl -fsSL https://drop-sh.fullyjustified.net | sh && sudo mv tectonic /usr/local/bin/
+
+# ARM (Apple silicon, Graviton, Jetson): the wrong architecture fails with
+# "Exec format error", so take the matching build
+V=0.17.0; A=$(uname -m)          # aarch64 or x86_64
+curl -fsSL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40$V/tectonic-$V-$A-unknown-linux-musl.tar.gz" \
+  | sudo tar -xz -C /usr/local/bin tectonic
+```
+
+Anything on `PATH` is used, so the location is up to you.
+
+---
+
+## Building from source
+
+Needs [Bun](https://bun.sh) 1.3 or newer.
+
+```bash
+cd cli
+bun install
+bun run tools/gen-skill-assets.ts      # embed the skill
+bun build --compile --minify --define 'process.env.DEV="false"' src/cli.tsx --outfile dist/omnisci
+
+cd ../desktop
+bun install
+bun run build:desktop                  # -> dist-desktop/omnisci-desktop
+```
+
+Cross-compiling the desktop launcher with `--target` works, it has no native
+dependencies. Cross-compiling the **CLI** does not: it pulls in a native module for
+formula rendering, and a cross-built binary embeds the wrong architecture's copy.
+That failure is lazy, appearing only when a formula is first rendered, which is why
+CI builds every CLI artifact on its own platform.
+
+---
+
+## When it does not work
+
+**`omnisci: command not found`** after installing. `~/.local/bin` is not on your
+`PATH`. Add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile.
+
+**The run stops at the `.tex`.** tectonic is missing. See above; this is expected
+behaviour, not a crash.
+
+**`Exec format error`** on ARM. An x86_64 build of tectonic. Take the `aarch64` one.
+
+**A python import fails partway through a run.** Package versions move: recent pandas
+and matplotlib have removed arguments that older analysis code still passes. The run
+prints the traceback rather than swallowing it, and the fix is normally in the
+analysis script the agent just wrote.
+
+**The desktop page says it needs the launcher.** You opened `127.0.0.1:<port>` without
+the one-time token, or the cookie expired after a day. Reopen from the menu-bar item,
+or restart it.

@@ -1,0 +1,69 @@
+# Datasets and per-run outputs are never committed. Download data separately;
+# the engine writes stage artifacts and figures under each case at run time.
+engine/examples/*/data/
+engine/examples/*/stages/
+engine/examples/*/*.pdf
+engine/examples/*/*.png
+!assets/**
+
+# The small, curated demo bundle is intentionally versioned. Full datasets
+# remain ignored and are fetched from their official sources.
+!engine/examples/birdaudio/data/
+!engine/examples/birdaudio/data/*.wav
+!engine/examples/feynman/data/
+!engine/examples/feynman/data/*.csv
+!engine/examples/galaxy_xsurvey/data/
+!engine/examples/galaxy_xsurvey/data/decals/
+!engine/examples/galaxy_xsurvey/data/decals/*
+!engine/examples/galaxy_xsurvey/data/sdss/
+!engine/examples/galaxy_xsurvey/data/sdss/*
+!engine/examples/med_ct3d/data/
+!engine/examples/med_ct3d/data/*.npy
+!engine/examples/stead_seismic/data/
+!engine/examples/stead_seismic/data/*.npy
+
+# Secrets
+.env
+*.key
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Node / Bun
+node_modules/
+cli/dist/
+desktop/dist/
+desktop/dist-single/
+desktop/test-results/
+desktop/playwright-report/
+desktop/.cache-fonts/
+*.tsbuildinfo
+
+# Build output
+build/
+dist/
+!desktop/packaging/**
+# ……但打包脚本会在自己目录下写编译产物和分发物，上面那条会把它们又放回来。
+desktop/packaging/*/dist/
+desktop/packaging/macos/dist-*/
+desktop/packaging/macos/out/
+desktop/packaging/macos/OmniScientist.icns
+desktop/packaging/launcher-ref/src/assets.gen.ts
+
+# Logs / scratch
+*.log
+*.bak
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 桌面版构建产物：assets.generated.ts 引用的是 dist/ 里带哈希的文件名，
+# 提交它会让干净 clone 直接类型检查失败。构建时生成，不进仓库。
+desktop/launcher/assets.generated.ts
+desktop/dist-desktop/
+scan_leaks.local.json

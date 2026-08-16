@@ -1,0 +1,226 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号，比如 0.1.0（不带 v）"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  BUN_VERSION: "1.3.14"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.pick.outputs.value }}
+    steps:
+      - id: pick
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # 产物名里不带版本号，这样 releases/latest/download/<name> 是一条永远有效的
+  # 链接，install.sh 和文档都不用跟着每次发版改。
+  #
+  # 一律用原生 runner 编。CLI 依赖 @resvg/resvg-js 这个原生模块，交叉编译能编出
+  # 文件，但塞进去的 .node 是宿主架构的，而它是懒加载的：只有渲染公式那一刻才炸。
+  cli:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    asset: omnisci-linux-x86_64 }
+          - { runner: ubuntu-24.04-arm, asset: omnisci-linux-arm64 }
+          - { runner: macos-latest,     asset: omnisci-darwin-arm64 }
+          - { runner: macos-13,         asset: omnisci-darwin-x86_64 }
+          - { runner: windows-latest,   asset: omnisci-windows-x86_64.exe }
+    runs-on: ${{ matrix.runner }}
+    # ARM Linux runner 在私有仓库上不免费，缺了不该拖垮整个发布
+    continue-on-error: ${{ matrix.runner == 'ubuntu-24.04-arm' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "${{ env.BUN_VERSION }}" }
+      - working-directory: cli
+        run: bun install --frozen-lockfile
+
+      # skill 嵌进二进制，发行版因此是单个文件：没有要解压的包，也没有必须保持
+      # 完整的目录结构。生成物是提交过的，这里顺带确认它没漂。
+      - name: 确认内嵌清单没漂
+        shell: bash
+        working-directory: cli
+        run: |
+          bun run tools/gen-skill-assets.ts
+          git diff --exit-code src/skill-assets.generated.ts
+
+      - name: 编译
+        shell: bash
+        working-directory: cli
+        run: |
+          bun build --compile --minify --define 'process.env.DEV="false"' \
+            src/cli.tsx --outfile "dist/${{ matrix.asset }}"
+
+      # Apple Silicon 上内核拒绝执行没签名的可执行文件。ad-hoc 签名免费、与
+      # Gatekeeper 无关（curl 下载的文件不带隔离属性，根本不会被问）。
+      - name: ad-hoc 签名
+        if: runner.os == 'macOS'
+        working-directory: cli
+        run: codesign --force --sign - "dist/${{ matrix.asset }}"
+
+      - name: 自检：旁边什么都没有也要能跑
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: cli
+        run: |
+          tmp=$(mktemp -d); cp "dist/${{ matrix.asset }}" "$tmp/omnisci"
+          ( cd "$tmp" && HOME="$tmp/home" ./omnisci --help | head -1 )
+
+      - name: 校验和
+        shell: bash
+        working-directory: cli/dist
+        run: |
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          else
+            shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            cli/dist/${{ matrix.asset }}
+            cli/dist/${{ matrix.asset }}.sha256
+
+  desktop:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    os: linux,  arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, os: linux,  arch: arm64 }
+          - { runner: macos-latest,     os: macos,  arch: arm64 }
+          - { runner: macos-13,         os: macos,  arch: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.runner == 'ubuntu-24.04-arm' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "${{ env.BUN_VERSION }}" }
+      - working-directory: cli
+        run: bun install --frozen-lockfile      # gateway 从 cli/src 取代码
+      - working-directory: desktop
+        run: bun install --frozen-lockfile
+      - working-directory: desktop
+        run: bun run build:assets
+      - working-directory: desktop
+        run: bun build --compile --minify launcher/main.ts --outfile dist-desktop/omnisci-desktop
+
+      - name: 打 Linux 安装包
+        if: matrix.os == 'linux'
+        working-directory: desktop
+        run: |
+          ./packaging/linux/build-linux.sh --binary dist-desktop/omnisci-desktop \
+            --version "${{ needs.version.outputs.value }}" --arch "${{ matrix.arch }}" --out staging
+          mkdir -p artifacts
+          mv staging/*.tar.gz "artifacts/OmniScientist-linux-${{ matrix.arch }}.tar.gz"
+          ( cd artifacts && sha256sum "OmniScientist-linux-${{ matrix.arch }}.tar.gz" \
+              > "OmniScientist-linux-${{ matrix.arch }}.tar.gz.sha256" )
+
+      # .app 外壳、菜单栏宿主、ad-hoc 签名和 tar 往返校验都在 build-app.sh 里，
+      # 那套在真机 macOS 15.7.7 / M3 上验收过。
+      - name: 打 macOS 应用
+        if: matrix.os == 'macos'
+        working-directory: desktop
+        run: |
+          ./packaging/macos/build-app.sh --binary dist-desktop/omnisci-desktop \
+            --version "${{ needs.version.outputs.value }}" --out staging
+          mkdir -p artifacts
+          mv staging/*.tar.gz "artifacts/OmniScientist-macos-${{ matrix.arch }}.tar.gz"
+          ( cd artifacts && shasum -a 256 "OmniScientist-macos-${{ matrix.arch }}.tar.gz" \
+              > "OmniScientist-macos-${{ matrix.arch }}.tar.gz.sha256" )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}-${{ matrix.arch }}
+          path: desktop/artifacts/*
+
+  skill:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          python3 -m pip install --quiet numpy pandas matplotlib
+          python3 skill/build.py --zip artifacts
+      - run: cd artifacts && sha256sum omnisci-skill.zip > omnisci-skill.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with: { name: skill, path: artifacts/* }
+
+  publish:
+    needs: [version, cli, desktop, skill]
+    if: always() && needs.version.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: staging }
+      - name: 汇总并列出实际拿到的产物
+        run: |
+          mkdir -p release
+          find staging -type f -exec cp {} release/ \;
+          ( cd release && cat *.sha256 > SHA256SUMS 2>/dev/null || true )
+          echo "### 本次实际产出" >> "$GITHUB_STEP_SUMMARY"
+          ls -lh release | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: OmniScientist ${{ needs.version.outputs.value }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.value) }}
+          draft: true
+          generate_release_notes: true
+          files: release/*
+          body: |
+            ## 装
+
+            ```bash
+            # 终端 agent, macOS 与 Linux
+            curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh
+
+            # 终端 agent, Windows
+            irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex
+
+            # 桌面工作台, macOS
+            curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniScientist-macos-arm64.tar.gz | tar -xz -C /Applications
+            ```
+
+            Claude Code 里用的话下 `omnisci-skill.zip`，解到 `~/.claude/skills/`，不需要 API key。
+
+            桌面版 Linux 包解开跑 `./install.sh`。完整说明在
+            [`docs/INSTALL.md`](https://github.com/Omni-Scientist/OmniScientist/blob/main/docs/INSTALL.md)。
+
+            终端安装不会触发 Gatekeeper：隔离属性是浏览器下载时打的，`curl` 不打。
+
+            ## 验过什么，没验什么
+
+            macOS 桌面版在真机 macOS 15.7.7 / M3 上过了 14 项验收（安装、启动、菜单栏、
+            退出、单实例、只绑 127.0.0.1、令牌处理、签名往返）。**Windows 版由 CI 编出来，
+            没有人在 Windows 上跑过。**
+
+            出 PDF 需要 python3 和 tectonic。桌面版会检测并引导安装，其余三种要自己装一次；
+            缺 tectonic 时流程照跑，停在 `.tex` 并说明。
+
+            校验：`sha256sum -c SHA256SUMS`

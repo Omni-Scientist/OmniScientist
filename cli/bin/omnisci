@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Launcher for the OmniScientist terminal agent.
+#
+# Credentials are read from a file that is parsed strictly as KEY=VALUE data, never
+# sourced as shell code, and are handed to the process through a one-time descriptor
+# so that analysis subprocesses do not inherit them.
+set -euo pipefail
+
+OMNISCI_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export OMNISCI_ROOT
+export PATH="$HOME/.bun/bin:$PATH"
+
+# This CLI carries its own copy of the skill, whose perception loop is bound to the
+# receipts that view_image writes. The repository-root skill/ is the Claude Code
+# edition and is NOT interchangeable with it. See cli/skills/README.md.
+if [ -z "${OMNISCI_SKILLS_DIR:-}" ]; then
+  if [ -d "$OMNISCI_ROOT/skills/omnisci" ]; then
+    OMNISCI_SKILLS_DIR="$OMNISCI_ROOT/skills"
+  else
+    echo "找不到 omnisci skill。设置 OMNISCI_SKILLS_DIR 指向包含 omnisci/ 的目录。" >&2
+    exit 78
+  fi
+fi
+export OMNISCI_SKILLS_DIR
+export OMNISCI="$OMNISCI_SKILLS_DIR/omnisci/bin"
+
+# shellcheck disable=SC1091
+. "$OMNISCI_ROOT/bin/credential-env.sh"
+
+if [ -z "${OMNISCI_CREDENTIAL_FD:-}" ]; then
+  ENV_FILE="${OMNISCI_ENV_FILE:-$HOME/.omnisci/env}"
+  if [ -f "$ENV_FILE" ]; then
+    omnisci_load_env_file "$ENV_FILE"
+  fi
+fi
+
+if [ -z "${OMNISCI_CREDENTIAL_FD:-}" ] && [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+  echo "OmniScientist 需要 DeepSeek API key。请设置 DEEPSEEK_API_KEY，或写入 ~/.omnisci/env。" >&2
+  echo "图像、视频、音频、信号、三维数据还需要 ANTHROPIC_API_KEY 作为感知侧车。" >&2
+  exit 78
+fi
+
+omnisci_seal_credentials
+
+if [ -x "$OMNISCI_ROOT/dist/omnisci" ]; then
+  exec "$OMNISCI_ROOT/dist/omnisci" "$@"
+fi
+
+cd "$OMNISCI_ROOT"
+exec bun run src/cli.tsx "$@"

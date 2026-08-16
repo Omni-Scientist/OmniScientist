@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Example machine-specific guard rules. Copy to ~/.omnisci/guard-rules.json to use.",
+    "",
+    "The built-in rules cover what is dangerous anywhere: rm, find -delete, shred,",
+    "truncate, mkfs, rsync --delete, qdel, git push, git reset --hard. Anything that",
+    "is only a rule on YOUR machine belongs here instead, because a refusal message",
+    "that assumes someone else's setup is worse than no rule at all.",
+    "",
+    "The two below are worked examples of that shape, for a machine with no TeX",
+    "installed where papers are compiled elsewhere. They are illustrations of how to",
+    "write a local rule, not recommendations: delete them and write your own.",
+    "",
+    "verdict is deny or ask. `command` matches in command position only, so a rule for",
+    "`rm` does not fire on `npm rm`. `contains` matches anywhere in the command line.",
+    "A refusal should always name the alternative: refusing without one makes a model",
+    "stall or go looking for a way around, which is worse than the original request.",
+    "You can also switch off a built-in by id: {\"disableRules\": [\"qdel\"]}."
+  ],
+  "rules": [
+    {
+      "id": "latex-local",
+      "command": "pdflatex|xelatex|lualatex|latexmk|latex|bibtex|biber|makeindex|pdftex|luatex|xetex|dvips|dvipdfmx|dvipdfm",
+      "verdict": "deny",
+      "reason": "这台机器上不跑 LaTeX 编译：没有装 TeX，而且编译日志很长，反复调错烧掉的 token 不成比例。注意这不是让你换个方式编译，是取消「本地验证编译」这个目标本身。改完 .tex 交给外部编译服务，回复里如实写明「未本地验证」。"
+    },
+    {
+      "id": "tex-acquire",
+      "contains": "texlive|tex-live|install-tl|tlmgr|tinytex|miktex|ctan\\.org|tug\\.org",
+      "verdict": "deny",
+      "reason": "这台机器上不安装 TeX 发行版（apt / docker / conda / brew 一律不行，全量镜像有好几个 GB）。不要再探测本机 TeX 环境，也不要寻找替代编译途径。"
+    }
+  ]
+}

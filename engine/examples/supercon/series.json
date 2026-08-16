@@ -1,0 +1,17 @@
+{
+ "role": "an experienced materials-informatics / superconductivity researcher",
+ "subject": "superconductor",
+ "property": "superconducting critical temperature (Tc)",
+ "domain": "data-driven prediction of superconductor critical temperature from chemical composition",
+ "idea_hints": "cross-family generalization gaps, distribution shift between superconductor families, extrapolation (leave-one-family-out) vs interpolation (random split) error, and how the features a model relies on shift between families",
+ "direction": "Quantify how well a composition-based ML model of superconductor Tc GENERALIZES ACROSS families (cuprate / iron_based / other). Concretely: train one fixed regressor (random forest or gradient boosting on the engineered features) and compare its error under (a) random k-fold CV against (b) leave-one-FAMILY-out CV, reporting the per-family extrapolation RMSE/R^2 and the GAP (ratio of leave-one-family-out error to random-CV error). Optionally characterize which features the model relies on within vs across families. This is a methodological audit: the gap is the result.",
+ "data": {
+  "n_items": 21263,
+  "files": {
+   "TRAIN_CSV": "data/train.csv",
+   "UNIQUE_M_CSV": "data/unique_m.csv"
+  },
+  "schema": "TRAIN_CSV: 21263 rows x 82 cols = 81 numeric features + 'critical_temp' (target, K). UNIQUE_M_CSV: 21263 rows, 86 element-fraction columns + 'material' (formula) + 'critical_temp'. Files align by row position.",
+  "summary": "DATASET (UCI 'Superconductivty Data', Hamidieh 2018; 21263 superconductors, CC BY 4.0).\nTwo aligned files (same 21263 rows, aligned by row position):\n  TRAIN_CSV (train.csv): 81 numeric ENGINEERED composition features (e.g. number_of_elements, mean_atomic_mass, wtd_mean_atomic_mass, gmean_atomic_mass, wtd_gmean_atomic_mass, entropy_atomic_mass, ...) + target column 'critical_temp' (K, range 0.0..185.0).\n  UNIQUE_M_CSV (unique_m.csv): 86 per-element FRACTION columns (one per element symbol H..., value = that element's fraction in the formula) + 'material' (chemical-formula string) + 'critical_temp'.\nSuperconductor FAMILY can be assigned from element fractions in UNIQUE_M_CSV: cuprate = has Cu and O; iron_based = has Fe and (As or Se); else = other (conventional/low-Tc, e.g. A15, MgB2, elemental).\nCOMPUTED family distribution (from the real data):\n    - cuprate: n=10532 (49.5 pct of data), mean Tc=59.9 K, max Tc=143.0 K\n    - iron_based: n=1682 (7.9 pct of data), mean Tc=22.0 K, max Tc=65.0 K\n    - other: n=9049 (42.6 pct of data), mean Tc=7.1 K, max Tc=185.0 K\n  sample formulas -- cuprate: ['Ba0.2La1.8Cu1O4', 'Ba0.1La1.9Ag0.1Cu0.9O4', 'Ba0.1La1.9Cu1O4'] ; iron_based: ['La1Fe1As1F0.11O0.89', 'La1F0.05Fe1As1O0.95', 'La0.87Sr0.13Fe1As1O1'] ; other: ['Ba0.65K0.35Bi1O3', 'Ba0.6K0.4Bi1O3', 'Ba0.6K0.4Bi1O3']\nNOTE the strong family imbalance AND Tc separation (cuprates dominate the high-Tc end), which is exactly why a model trained on a mix can look accurate under a RANDOM split yet fail to EXTRAPOLATE to a held-out family."
+ }
+}

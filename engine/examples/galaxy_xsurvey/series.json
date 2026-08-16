@@ -1,0 +1,93 @@
+{
+ "role": "an experienced extragalactic astronomer who classifies galaxy morphology from survey imagery",
+ "subject": "galaxy",
+ "property": "visual morphology class (smooth / spiral / edge_on)",
+ "domain": "galaxy morphology classification across imaging surveys of differing depth and resolution",
+ "idea_hints": "cross-survey differences in imaging depth / PSF / pixel scale between DECaLS (deep) and SDSS (shallow), and how morphology perception behaves across surveys",
+ "direction": "For the SAME galaxies imaged by two surveys, DECaLS (deep) and SDSS (shallow), each record provides: survey, morph (the true morphology label), pred_morph (a general VLM's morphology prediction), correct_morph (1/0), and file (image path relative to the working directory, e.g. data/decals/g000.png). Using this paired cross-survey image set, find a concrete, novel, testable question and produce a short publishable paper. Choose the method yourself and run real code to test it; report every decisive number as name = value.",
+ "perception": {
+  "question": "You are looking at a single galaxy in a survey image cutout. Classify its coarse visual morphology as EXACTLY one of: 'smooth' (smooth/round/elliptical/cigar, no spiral arms or disk structure), 'spiral' (a face-on disk with visible spiral arms or bar), or 'edge_on' (a thin edge-on disk seen side-on). Answer with one of those three words.",
+  "extract": [
+   "morph"
+  ],
+  "truth_fields": [
+   "morph"
+  ],
+  "group_by": "survey"
+ },
+ "members": [
+  {
+   "idx": 0,
+   "gid": 0,
+   "survey": "decals",
+   "file": "data/decals/g000.png",
+   "morph": "smooth",
+   "ra": 204.88504,
+   "dec": 27.92868,
+   "pred_morph": "smooth",
+   "correct_morph": 1
+  },
+  {
+   "idx": 1,
+   "gid": 0,
+   "survey": "sdss",
+   "file": "data/sdss/g000.jpg",
+   "morph": "smooth",
+   "ra": 204.88504,
+   "dec": 27.92868,
+   "pred_morph": "smooth",
+   "correct_morph": 1
+  },
+  {
+   "idx": 2,
+   "gid": 35,
+   "survey": "decals",
+   "file": "data/decals/g035.png",
+   "morph": "spiral",
+   "ra": 26.29493,
+   "dec": -0.5302,
+   "pred_morph": "smooth",
+   "correct_morph": 0
+  },
+  {
+   "idx": 3,
+   "gid": 35,
+   "survey": "sdss",
+   "file": "data/sdss/g035.jpg",
+   "morph": "spiral",
+   "ra": 26.29493,
+   "dec": -0.5302,
+   "pred_morph": "spiral",
+   "correct_morph": 1
+  },
+  {
+   "idx": 4,
+   "gid": 70,
+   "survey": "decals",
+   "file": "data/decals/g070.png",
+   "morph": "edge_on",
+   "ra": 202.08511,
+   "dec": 12.76194,
+   "pred_morph": "edge_on",
+   "correct_morph": 1
+  },
+  {
+   "idx": 5,
+   "gid": 70,
+   "survey": "sdss",
+   "file": "data/sdss/g070.jpg",
+   "morph": "edge_on",
+   "ra": 202.08511,
+   "dec": 12.76194,
+   "pred_morph": "edge_on",
+   "correct_morph": 1
+  }
+ ],
+ "_demo": {
+  "included": true,
+  "members": 6,
+  "full_members": 210,
+  "selection": "one paired DECaLS/SDSS galaxy per morphology class",
+  "purpose": "interface and perception smoke test; not the full paper evaluation"
+ }
+}

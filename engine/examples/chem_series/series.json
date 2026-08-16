@@ -1,0 +1,106 @@
+{
+ "field": "chem",
+ "property": "aqueous solubility (measured log mol/L, ESOL)",
+ "scaffold": "biphenyl (PCB congeners)",
+ "role": "an experienced physical-organic / medicinal chemist",
+ "subject": "polychlorinated biphenyl congener",
+ "domain": "PCB physical-organic chemistry",
+ "perception": {
+  "question": "You are a chemist reading ONE chlorinated biphenyl structure diagram. Count the total number of Cl substituents on the whole molecule, and how many of them sit at an ORTHO position -- a ring carbon immediately adjacent to the single bond joining the two rings (positions 2, 6, 2', 6').",
+  "extract": [
+   "n_Cl",
+   "n_ortho_Cl"
+  ],
+  "truth_fields": [
+   "n_Cl",
+   "n_ortho_Cl"
+  ]
+ },
+ "idea_hints": "position/substitution-pattern effects at fixed chlorine count (e.g. ortho substitution forcing inter-ring twist / loss of planarity), non-additive interactions, and non-monotonic trends -- determinants orthogonal to gross chlorine count and hydrophobicity",
+ "members": [
+  {
+   "idx": 0,
+   "file": "imgs/mol_00.png",
+   "compound_id": "4-Methylbiphenyl",
+   "smiles": "Cc1ccc(-c2ccccc2)cc1",
+   "measured_logS": -4.62,
+   "n_Cl": 0,
+   "n_ortho_Cl": 0,
+   "MW": 168.2,
+   "logP": 3.66
+  },
+  {
+   "idx": 1,
+   "file": "imgs/mol_04.png",
+   "compound_id": "3-Chlorobiphenyl",
+   "smiles": "Clc1cccc(-c2ccccc2)c1",
+   "measured_logS": -4.88,
+   "n_Cl": 1,
+   "n_ortho_Cl": 0,
+   "MW": 188.7,
+   "logP": 4.01
+  },
+  {
+   "idx": 2,
+   "file": "imgs/mol_06.png",
+   "compound_id": "3,4-PCB",
+   "smiles": "Clc1ccc(-c2ccccc2)cc1Cl",
+   "measured_logS": -6.39,
+   "n_Cl": 2,
+   "n_ortho_Cl": 0,
+   "MW": 223.1,
+   "logP": 4.66
+  },
+  {
+   "idx": 3,
+   "file": "imgs/mol_11.png",
+   "compound_id": "2',3,4-PCB",
+   "smiles": "Clc1ccc(-c2cccc(Cl)c2Cl)cc1",
+   "measured_logS": -6.29,
+   "n_Cl": 3,
+   "n_ortho_Cl": 1,
+   "MW": 257.5,
+   "logP": 5.31
+  },
+  {
+   "idx": 4,
+   "file": "imgs/mol_15.png",
+   "compound_id": "2,3',4',5-PCB",
+   "smiles": "Clc1ccc(Cl)c(-c2ccc(Cl)c(Cl)c2)c1",
+   "measured_logS": -7.25,
+   "n_Cl": 4,
+   "n_ortho_Cl": 1,
+   "MW": 292.0,
+   "logP": 5.97
+  },
+  {
+   "idx": 5,
+   "file": "imgs/mol_20.png",
+   "compound_id": "2,2',3,4,5-PCB",
+   "smiles": "Clc1cc(Cl)c(-c2cccc(Cl)c2Cl)cc1Cl",
+   "measured_logS": -7.21,
+   "n_Cl": 5,
+   "n_ortho_Cl": 2,
+   "MW": 326.4,
+   "logP": 6.62
+  },
+  {
+   "idx": 6,
+   "file": "imgs/mol_25.png",
+   "compound_id": "2,3,3',4,4',5-PCB",
+   "smiles": "Clc1ccc(-c2cc(Cl)c(Cl)c(Cl)c2Cl)cc1Cl",
+   "measured_logS": -7.82,
+   "n_Cl": 6,
+   "n_ortho_Cl": 1,
+   "MW": 360.9,
+   "logP": 7.27
+  }
+ ],
+ "_demo": {
+  "included": true,
+  "members": 7,
+  "full_members": 30,
+  "selection": "one molecule per chlorine-count group",
+  "purpose": "interface and perception smoke test; not the full paper evaluation"
+ }
+}

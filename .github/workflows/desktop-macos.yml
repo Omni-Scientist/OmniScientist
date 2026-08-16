@@ -1,0 +1,151 @@
+name: desktop-macos
+
+# Builds OmniScientist.app, the piece release.yml currently says is missing
+# ("macOS 桌面版还不能用 … .app 外壳还没人做").
+#
+# It is deliberately standalone so it cannot collide with release.yml while that
+# file is still being worked on. To fold it in later, take the three steps
+# between "Build the service binary" and "Verify what we are about to ship" and
+# drop them into release.yml's `desktop` job under `if: matrix.os == 'darwin'`,
+# replacing the bare-binary packaging step. Nothing here needs a secret.
+#
+# Both architectures come off one arm64 runner: bun cross-compiles with --target
+# and swiftc with -target. release.yml instead uses a macos-13 runner for x86_64;
+# either works, and cross-compiling is one runner cheaper.
+#
+# Signing is ad-hoc, which is what makes the binaries runnable on Apple Silicon.
+# It has nothing to do with Gatekeeper: the documented install path (curl | tar)
+# never sets the quarantine attribute, so Gatekeeper is never consulted. To sign
+# with a real Developer ID later, import the certificate into a temporary keychain
+# and set CODESIGN_IDENTITY on the packaging step.
+
+# 发版由 release.yml 负责（它的 desktop 任务现在直接调 packaging/macos/build-app.sh），
+# 这里只在分支和 PR 上当 macOS 构建检查，不再监听 tag，免得同一个 tag 上两条流水线
+# 各编一遍，还只有一边的产物能进 release。
+on:
+  push:
+    branches: ["main", "launch/**"]
+    paths: ["desktop/**", "cli/**", ".github/workflows/desktop-macos.yml"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop-macos.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the bundle"
+        required: false
+        default: "0.0.0-dev"
+
+concurrency:
+  group: desktop-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: OmniScientist.app
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version || '0.0.0-dev' }}"
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "building $version"
+
+      - name: Build the service binary for both architectures
+        run: |
+          # The launcher pulls in the gateway, which pulls in cli/src, so both
+          # dependency trees have to be present.
+          (cd cli && bun install --frozen-lockfile)
+          cd desktop
+          bun install --frozen-lockfile
+          bun run build:assets
+          for target in arm64 x64; do
+            bun build --compile --minify --target="bun-darwin-$target" \
+              launcher/main.ts --outfile "dist-desktop/omnisci-desktop-darwin-$target"
+          done
+          ls -la dist-desktop
+
+      - name: The four implementations must stay in step
+        run: python3 scripts/check_parity.py
+
+      - name: The binary must carry the whole interface, not half of it
+        working-directory: desktop
+        run: |
+          # 契约测试只看服务行为，不看界面。静态资源少嵌一半时服务照样健康，
+          # 而用户打开看到的是没有 logo、图片全裂。所以数一遍，并确认首屏那张
+          # logo 真的在里面。dist/ 里有多少个文件，就该嵌进去多少个。
+          expected=$(find dist -type f | wc -l | tr -d ' ')
+          embedded=$(grep -c 'with { type: "file" }' launcher/assets.generated.ts)
+          echo "dist 里 $expected 个文件，嵌进去 $embedded 个（含 skill）"
+          if [ "$embedded" -lt "$expected" ]; then
+            echo "少嵌了：dist 有 $expected，assets.generated.ts 只引用了 $embedded" >&2
+            exit 1
+          fi
+          grep -q 'omni-logo.svg' launcher/assets.generated.ts \
+            || { echo "logo 没被嵌进去，界面会缺图" >&2; exit 1; }
+
+      - name: Check the service binary against the contract
+        working-directory: desktop/packaging/launcher-ref
+        run: ./contract-test.sh ../../dist-desktop/omnisci-desktop-darwin-arm64
+
+      - name: Package both bundles
+        working-directory: desktop/packaging/macos
+        run: |
+          ./build-app.sh --binary ../../dist-desktop/omnisci-desktop-darwin-arm64 \
+                         --version "${{ steps.version.outputs.value }}" --out dist-arm64
+          ./build-app.sh --binary ../../dist-desktop/omnisci-desktop-darwin-x64 \
+                         --version "${{ steps.version.outputs.value }}" --out dist-x86_64
+          # The install line in the README selects with `uname -m`, so the file
+          # names have to match what that prints.
+          mkdir -p out
+          cp dist-arm64/OmniScientist-*-arm64.tar.gz   out/OmniScientist-arm64.tar.gz
+          cp dist-x86_64/OmniScientist-*-x86_64.tar.gz out/OmniScientist-x86_64.tar.gz
+          ls -la out
+
+      - name: Verify what we are about to ship
+        working-directory: desktop/packaging/macos
+        run: |
+          for arch in arm64 x86_64; do
+            work=$(mktemp -d)
+            tar -xzf "out/OmniScientist-$arch.tar.gz" -C "$work"
+            app="$work/OmniScientist.app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            plutil -lint "$app/Contents/Info.plist"
+            test -f "$app/Contents/Resources/OmniScientist.icns"
+            test -x "$app/Contents/MacOS/OmniScientist"
+            test -x "$app/Contents/MacOS/omnisci-desktop"
+            for binary in OmniScientist omnisci-desktop; do
+              got=$(lipo -archs "$app/Contents/MacOS/$binary")
+              [ "$got" = "$arch" ] || { echo "$binary is $got, expected $arch" >&2; exit 1; }
+            done
+            echo "$arch bundle is intact"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OmniScientist-macos
+          path: desktop/packaging/macos/out/*.tar.gz
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            desktop/packaging/macos/out/OmniScientist-arm64.tar.gz \
+            desktop/packaging/macos/out/OmniScientist-x86_64.tar.gz \
+            --clobber

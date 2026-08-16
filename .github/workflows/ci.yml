@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "launch/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.3.14"
+
+jobs:
+  leaks:
+    name: no personal or internal data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python3 scripts/scan_leaks.py
+
+  engine:
+    name: python engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # 语法先过一遍。装齐科学栈再导入是另一回事，这里只保证没有语法级的坏文件。
+      - run: python3 -m compileall -q engine/omniscientist engine/scripts skill/omnisci cli/skills
+      - name: skill 自包含
+        run: |
+          python3 -m pip install --quiet numpy pandas matplotlib
+          python3 skill/build.py
+
+  cli:
+    name: terminal agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "${{ env.BUN_VERSION }}" }
+      - working-directory: cli
+        run: bun install --frozen-lockfile
+      - name: 内嵌清单没漂
+        working-directory: cli
+        run: |
+          bun run tools/gen-skill-assets.ts
+          git diff --exit-code src/skill-assets.generated.ts
+      - working-directory: cli
+        run: bun x tsc --noEmit
+      - working-directory: cli
+        run: bun test
+      - name: 能编出可执行文件
+        working-directory: cli
+        run: |
+          bun build --compile --minify --define 'process.env.DEV="false"' \
+            src/cli.tsx --outfile /tmp/omnisci
+          test -x /tmp/omnisci
+          # 单文件必须旁边什么都没有也能跑起来：skill 是嵌进去的
+          tmp=$(mktemp -d); cp /tmp/omnisci "$tmp/omnisci"
+          ( cd "$tmp" && HOME="$tmp/home" ./omnisci --help | head -1 )
+
+  desktop:
+    name: desktop workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "${{ env.BUN_VERSION }}" }
+      - working-directory: cli
+        run: bun install --frozen-lockfile      # gateway 从 cli/src 取代码
+      - working-directory: desktop
+        run: bun install --frozen-lockfile
+      # assets.generated.ts 是构建产物，不在仓库里，所以必须先生成再类型检查
+      - working-directory: desktop
+        run: bun run build:assets
+      - working-directory: desktop
+        run: bun run typecheck        # 浏览器侧和 Bun 侧两份 tsconfig 都要过
+      - working-directory: desktop
+        run: bun test gateway
+      - name: 启动器能编出来并且真的起得来
+        working-directory: desktop
+        run: |
+          bun build --compile --minify launcher/main.ts --outfile /tmp/omnisci-desktop
+          /tmp/omnisci-desktop --workspace /tmp/ci-workspace --no-open --verbose &
+          for i in $(seq 1 30); do
+            port=$(python3 -c "import json;print(json.load(open('$HOME/.omnisci/desktop.lock'))['port'])" 2>/dev/null) && break
+            sleep 1
+          done
+          test -n "$port"
+          curl -fsS "http://127.0.0.1:$port/api/health" | tee /dev/stderr | grep -q '"ok":true'
+          # 无凭据必须被拒，这条是安全边界不是可选项
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/")" = "401"
+          token=$(python3 -c "import json;print(json.load(open('$HOME/.omnisci/desktop.lock'))['token'])")
+          curl -fsS -c /tmp/jar "http://127.0.0.1:$port/?t=$token" -o /dev/null
+          curl -fsS -b /tmp/jar "http://127.0.0.1:$port/" | grep -qi "<!doctype html"
+          curl -fsS -b /tmp/jar -X POST "http://127.0.0.1:$port/api/quit" | grep -q '"ok":true'

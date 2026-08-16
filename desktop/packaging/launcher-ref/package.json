@@ -1,0 +1,16 @@
+{
+  "name": "omnisci-desktop-launcher-ref",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Contract-only reference implementation of the omnisci-desktop service binary (the desktop service contract)",
+  "scripts": {
+    "assets": "bun run tools/gen-assets.ts",
+    "start": "bun run src/main.ts",
+    "build": "./build.sh",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}

@@ -1,0 +1,41 @@
+{
+ "role": "a biomedical knowledge-graph / network-biology researcher",
+ "subject": "a biomedical knowledge graph of drugs, proteins, diseases, side-effects and molecular functions and their relations",
+ "property": "the multi-relational graph structure: typed entities and the 51 relation types among them",
+ "domain": "biomedical knowledge-graph mining / link prediction over a heterogeneous drug-protein-disease-sideeffect-function graph",
+ "request": "This is a biomedical knowledge graph of drugs, proteins, side-effects, diseases and molecular functions and their relations (the OGB ogbl-biokg dataset): 5,088,434 directed (head, relation, tail) triples over 93,773 typed nodes (5 entity types) and 51 relation types, split into train/valid/test for link prediction. Find a concrete, novel, testable question this knowledge graph can answer, decide your own method, run real code on the graph (load it via the OGB loader in the data block's load recipe), and produce a short publishable paper.",
+ "data": {
+  "n_items": 5088434,
+  "root": "data/ogbl-biokg",
+  "loader": "ogb.linkproppred.LinkPropPredDataset",
+  "load_recipe": "import torch\n_orig = torch.load\ntorch.load = lambda *a, **k: _orig(*a, **{**k, 'weights_only': False})  # REQUIRED: ogb caches with torch.save; torch>=2.6 defaults weights_only=True and fails on the cache\nfrom ogb.linkproppred import LinkPropPredDataset\ndataset = LinkPropPredDataset(name='ogbl-biokg', root='data/ogbl-biokg')  # already downloaded+processed at this root\ngraph = dataset[0]           # dict: edge_index_dict[(head_type,rel,tail_type)]=(2,E), edge_reltype, num_nodes_dict\nsplit = dataset.get_edge_split()   # {'train','valid','test'}; each has head,relation,tail,head_type,tail_type",
+  "verified_stats": {
+   "n_nodes": 93773,
+   "nodes_by_type": {
+    "disease": 10687,
+    "drug": 10533,
+    "function": 45085,
+    "protein": 17499,
+    "sideeffect": 9969
+   },
+   "n_relation_types": 51,
+   "n_triples_total": 5088434,
+   "split_sizes": {
+    "train": 4762678,
+    "valid": 162886,
+    "test": 162870
+   },
+   "train_edges_in_graph0": 4762678
+  },
+  "files": {
+   "RELATIONS_CSV": "data/mapping/relidx2relname.csv",
+   "DRUG_ENTITIES_CSV": "data/mapping/drug_entidx2name.csv",
+   "PROTEIN_ENTITIES_CSV": "data/mapping/protein_entidx2name.csv",
+   "DISEASE_ENTITIES_CSV": "data/mapping/disease_entidx2name.csv",
+   "SIDEEFFECT_ENTITIES_CSV": "data/mapping/sideeffect_entidx2name.csv",
+   "FUNCTION_ENTITIES_CSV": "data/mapping/function_entidx2name.csv"
+  },
+  "schema": "KNOWLEDGE GRAPH (heterogeneous, multi-relational). VERIFIED (loaded from the OGB cache at 'root'): 5,088,434 directed (head, relation, tail) triples over 93,773 nodes of 5 entity types (drug=10533, protein=17499, disease=10687, sideeffect=9969, function=45085) and 51 relation types. The triples are split for link prediction: train=4,762,678, valid=162,886, test=162,870 (sum=5,088,434). The observed message-passing graph dataset[0]['edge_index_dict'] holds the 4,762,678 TRAINING edges (keyed by canonical (head_type, relation, tail_type)); the held-out valid/test triples come from dataset.get_edge_split(). LOAD RECIPE (run exactly; the torch.load shim is required under torch>=2.6):\nimport torch\n_orig = torch.load\ntorch.load = lambda *a, **k: _orig(*a, **{**k, 'weights_only': False})  # REQUIRED: ogb caches with torch.save; torch>=2.6 defaults weights_only=True and fails on the cache\nfrom ogb.linkproppred import LinkPropPredDataset\ndataset = LinkPropPredDataset(name='ogbl-biokg', root='data/ogbl-biokg')  # already downloaded+processed at this root\ngraph = dataset[0]           # dict: edge_index_dict[(head_type,rel,tail_type)]=(2,E), edge_reltype, num_nodes_dict\nsplit = dataset.get_edge_split()   # {'train','valid','test'}; each has head,relation,tail,head_type,tail_type\nThe pointer CSVs in 'files' are the REAL entity-index->ID and relation-index->name vocabularies (pandas.read_csv); they align with the integer node/relation indices in the full triple set.",
+  "summary": "DATASET: ogbl-biokg (Open Graph Benchmark, OGB), a large biomedical KNOWLEDGE GRAPH; release v1.\nA multi-relational, heterogeneous graph of directed (head, relation, tail) triples. The full graph was re-fetched and processed via OGB into the cache at root='data/ogbl-biokg' (the previous local biokg.zip was truncated); the 5M triples are NOT copied into this case -- load them from that cache with the recipe below. The CSVs under data/mapping/ are the REAL entity/relation vocabularies (a small pointer).\nVERIFIED COUNTS (from the loaded graph, not invented):\n  NODES: 93,773 total across 5 entity types -- drug=10533 (STITCH IDs, e.g. CID000000001), protein=17499 (Entrez Gene IDs), disease=10687 (UMLS CUIs), sideeffect=9969 (UMLS CUIs), function=45085 (Gene Ontology IDs).\n  RELATIONS: 51 relation types (see data/mapping/relidx2relname.csv), e.g. disease-protein, drug-disease, drug-protein, drug-sideeffect, protein-function, function-function, many drug-drug_<disease-context> and protein-protein_<mechanism> (activation/binding/catalysis/expression/inhibition/ptmod/reaction).\n  TRIPLES: 5,088,434 total, split train=4,762,678 / valid=162,886 / test=162,870. dataset[0]['edge_index_dict'] carries the 4,762,678 training edges; get_edge_split() gives valid/test.\nHOW TO LOAD THE FULL GRAPH (Python, ogb installed):\nimport torch\n_orig = torch.load\ntorch.load = lambda *a, **k: _orig(*a, **{**k, 'weights_only': False})  # REQUIRED: ogb caches with torch.save; torch>=2.6 defaults weights_only=True and fails on the cache\nfrom ogb.linkproppred import LinkPropPredDataset\ndataset = LinkPropPredDataset(name='ogbl-biokg', root='data/ogbl-biokg')  # already downloaded+processed at this root\ngraph = dataset[0]           # dict: edge_index_dict[(head_type,rel,tail_type)]=(2,E), edge_reltype, num_nodes_dict\nsplit = dataset.get_edge_split()   # {'train','valid','test'}; each has head,relation,tail,head_type,tail_type"
+ }
+}

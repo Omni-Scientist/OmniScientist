@@ -1,0 +1,11 @@
+# Optional dependencies used only by scripts/data.py for full datasets.
+# Install the packages needed by the cases you plan to fetch.
+datasets>=3.0
+pyarrow
+ogb
+torch
+medmnist
+soundata
+seisbench
+h5py
+scikit-learn

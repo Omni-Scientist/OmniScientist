@@ -1,0 +1,85 @@
+{
+ "role": "a radiology / biomedical-imaging researcher analyzing small 3D CT volume crops of anatomical structures",
+ "subject": "a 64^3-voxel CT volume crop of an anatomical structure (a lung nodule, an abdominal/thoracic organ, or a rib segment) from clinical CT, drawn from the MedMNIST v2 3D benchmarks (NoduleMNIST3D, OrganMNIST3D, FractureMNIST3D)",
+ "property": "which MedMNIST3D subset the crop comes from (nodule / organ / fracture) and its ground-truth clinical label: nodule benign vs malignant; organ identity (one of 11 organs); rib-fracture category (buckle / nondisplaced / displaced)",
+ "request": "These are 1496 individual 64x64x64-voxel CT volume crops from three MedMNIST v2 3D subsets: 500 lung nodules labelled benign/malignant, 495 organ crops spanning 11 organ classes, and 501 rib-segment crops labelled by fracture type. Find a concrete, novel, testable question these 3D volumes can answer, decide your own method, run real code on the volumes, and produce a short publishable paper.",
+ "members": [
+  {
+   "idx": 0,
+   "file": "data/nodule_0000.npy",
+   "modality": "threeD",
+   "label": "benign",
+   "label_id": 0,
+   "subset": "nodule",
+   "split": "train",
+   "orig_index": 234
+  },
+  {
+   "idx": 1,
+   "file": "data/nodule_0250.npy",
+   "modality": "threeD",
+   "label": "malignant",
+   "label_id": 1,
+   "subset": "nodule",
+   "split": "train",
+   "orig_index": 1149
+  },
+  {
+   "idx": 2,
+   "file": "data/organ_0000.npy",
+   "modality": "threeD",
+   "label": "liver",
+   "label_id": 0,
+   "subset": "organ",
+   "split": "val",
+   "orig_index": 61
+  },
+  {
+   "idx": 3,
+   "file": "data/organ_0045.npy",
+   "modality": "threeD",
+   "label": "kidney-right",
+   "label_id": 1,
+   "subset": "organ",
+   "split": "train",
+   "orig_index": 299
+  },
+  {
+   "idx": 4,
+   "file": "data/fracture_0000.npy",
+   "modality": "threeD",
+   "label": "buckle rib fracture",
+   "label_id": 0,
+   "subset": "fracture",
+   "split": "train",
+   "orig_index": 450
+  },
+  {
+   "idx": 5,
+   "file": "data/fracture_0167.npy",
+   "modality": "threeD",
+   "label": "nondisplaced rib fracture",
+   "label_id": 1,
+   "subset": "fracture",
+   "split": "test",
+   "orig_index": 203
+  },
+  {
+   "idx": 6,
+   "file": "data/fracture_0334.npy",
+   "modality": "threeD",
+   "label": "displaced rib fracture",
+   "label_id": 2,
+   "subset": "fracture",
+   "split": "test",
+   "orig_index": 217
+  }
+ ],
+ "_demo": {
+  "included": true,
+  "members": 7,
+  "full_members": 1496,
+  "selection": "2 nodule, 2 organ, and 3 fracture volumes with distinct labels",
+  "purpose": "interface and perception smoke test; not the full paper evaluation"
+ }
+}

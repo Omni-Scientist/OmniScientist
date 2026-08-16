@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Starting point for hardened-runtime signing, NOT a verified list.
+
+  The bundled service binary is a Bun compile product, so it JITs. The first two
+  keys are the ones that are expected to be required, and the third is expected
+  to be needed because the host process spawns a separately signed child.
+
+  Whoever does the macOS packaging must verify each key empirically: remove one,
+  re-sign, run, see whether it still works. Ship the smallest set that passes.
+  Record the findings in the desktop service contract (5) and delete the keys that turn out to
+  be unnecessary. Do not ship this file unchanged.
+
+  The app is deliberately NOT sandboxed: it reads and writes a user-chosen
+  workspace directory and spawns Python and tectonic. Do not add
+  com.apple.security.app-sandbox.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

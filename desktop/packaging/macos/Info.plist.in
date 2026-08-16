@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template. build-app.sh substitutes @VERSION@ and @BUILD@ from the git tag.
+  Do not hard-code a version here.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.omni-scientist.desktop</string>
+    <key>CFBundleName</key>
+    <string>OmniScientist</string>
+    <key>CFBundleDisplayName</key>
+    <string>OmniScientist</string>
+    <key>CFBundleExecutable</key>
+    <string>OmniScientist</string>
+    <key>CFBundleIconFile</key>
+    <string>OmniScientist</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@BUILD@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Menu-bar resident only: no Dock icon, absent from Cmd-Tab. See the desktop service contract (4.3). -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>MIT licensed. See LICENSE in the source repository.</string>
+</dict>
+</plist>

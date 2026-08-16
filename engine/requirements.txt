@@ -1,0 +1,19 @@
+# OmniScientist engine dependencies (Python 3.10+)
+
+# Numerics, data, plotting
+numpy
+scipy
+pandas
+matplotlib
+
+# Perception: images, video frames, symbolic math
+Pillow
+imageio[ffmpeg]
+sympy
+
+# Chemistry perception (SMILES parsing / molecule rendering)
+rdkit
+
+# Model transports
+openai>=1.30      # OpenAI official, OpenAI-compatible gateways, OpenRouter, local vLLM/sglang
+anthropic>=0.40   # native Anthropic SDK for prompt caching on Claude backbones

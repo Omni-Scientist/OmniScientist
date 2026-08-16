@@ -1,0 +1,37 @@
+{
+  "name": "omnisci-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "dev:local": "bun run tools/dev-local.ts",
+    "gateway": "bun run gateway/server.ts",
+    "build": "bun run typecheck && vite build",
+    "build:assets": "VITE_OMNISCI_LIVE=1 vite build && bun run tools/gen-assets.ts",
+    "build:desktop": "bun run build:assets && bun build --compile --minify launcher/main.ts --outfile dist-desktop/omnisci-desktop",
+    "preview": "vite preview --host 0.0.0.0",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.bun.json",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "lucide-react": "^0.468.0",
+    "prism-react-renderer": "^2.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/bun": "^1.3.14",
+    "@types/node": "^26.2.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

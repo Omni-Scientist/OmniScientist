@@ -1,0 +1,85 @@
+{
+ "field": "physics",
+ "role": "a physicist who recovers governing equations from sampled numerical data (symbolic regression)",
+ "subject": "a data table sampling one unknown physical equation: several input-variable columns plus one output column named 'target'",
+ "property": "the hidden closed-form equation that maps the input columns to 'target' (each table is one Feynman equation)",
+ "request": "Each table holds sampled inputs (the named columns) and an output ('target') produced by one unknown governing equation, drawn from the Feynman Symbolic Regression Database. Find a concrete, novel, testable question this data can answer, decide your own method, run real code, and produce a short publishable paper.",
+ "members": [
+  {
+   "idx": 0,
+   "file": "data/I.12.1_newton_F.csv",
+   "label": "I.12.1_newton_F",
+   "modality": "table",
+   "columns": [
+    "m",
+    "a",
+    "target"
+   ]
+  },
+  {
+   "idx": 1,
+   "file": "data/I.12.5_qE.csv",
+   "label": "I.12.5_qE",
+   "modality": "table",
+   "columns": [
+    "q",
+    "Ef",
+    "target"
+   ]
+  },
+  {
+   "idx": 2,
+   "file": "data/I.13.12_gravity.csv",
+   "label": "I.13.12_gravity",
+   "modality": "table",
+   "columns": [
+    "m1",
+    "m2",
+    "r",
+    "target"
+   ]
+  },
+  {
+   "idx": 3,
+   "file": "data/I.14.3_mgz.csv",
+   "label": "I.14.3_mgz",
+   "modality": "table",
+   "columns": [
+    "m",
+    "g",
+    "z",
+    "target"
+   ]
+  },
+  {
+   "idx": 4,
+   "file": "data/I.14.4_spring.csv",
+   "label": "I.14.4_spring",
+   "modality": "table",
+   "columns": [
+    "k",
+    "x",
+    "target"
+   ]
+  },
+  {
+   "idx": 5,
+   "file": "data/I.15.3x_length.csv",
+   "label": "I.15.3x_length",
+   "modality": "table",
+   "columns": [
+    "x",
+    "u",
+    "c",
+    "target"
+   ]
+  }
+ ],
+ "_demo": {
+  "included": true,
+  "members": 6,
+  "full_members": 12,
+  "selection": "first 6 distinct physical equations",
+  "purpose": "interface and perception smoke test; not the full paper evaluation"
+ }
+}

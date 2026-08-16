@@ -1,0 +1,55 @@
+{
+ "role": "an experienced pathologist who reads H&E-stained colorectal histopathology",
+ "subject": "colorectal histopathology tile",
+ "property": "tissue type (one of 8 Kather classes)",
+ "request": "These are H&E-stained colorectal tissue tiles (Kather 2016), each labelled with one of eight tissue types: ADIPOSE, COMPLEX, DEBRIS, EMPTY, LYMPHO, MUCOSA, STROMA, TUMOR. Find a concrete, novel, testable question this data can answer, and produce a short publishable paper.",
+ "members": [
+  {
+   "idx": 0,
+   "file": "data1k/ADIPOSE_000.png",
+   "label": "ADIPOSE"
+  },
+  {
+   "idx": 1,
+   "file": "data1k/COMPLEX_000.png",
+   "label": "COMPLEX"
+  },
+  {
+   "idx": 2,
+   "file": "data1k/DEBRIS_000.png",
+   "label": "DEBRIS"
+  },
+  {
+   "idx": 3,
+   "file": "data1k/EMPTY_000.png",
+   "label": "EMPTY"
+  },
+  {
+   "idx": 4,
+   "file": "data1k/LYMPHO_000.png",
+   "label": "LYMPHO"
+  },
+  {
+   "idx": 5,
+   "file": "data1k/MUCOSA_000.png",
+   "label": "MUCOSA"
+  },
+  {
+   "idx": 6,
+   "file": "data1k/STROMA_000.png",
+   "label": "STROMA"
+  },
+  {
+   "idx": 7,
+   "file": "data1k/TUMOR_000.png",
+   "label": "TUMOR"
+  }
+ ],
+ "_demo": {
+  "included": true,
+  "members": 8,
+  "full_members": 1000,
+  "selection": "one tile per tissue class",
+  "purpose": "interface and perception smoke test; not the full paper evaluation"
+ }
+}

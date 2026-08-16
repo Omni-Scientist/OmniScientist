@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OmniScientist
+GenericName=Research Workspace
+Comment=Autonomous multimodal research agent that turns raw data into a paper
+Exec=@BIN@
+Icon=omniscientist
+Terminal=false
+Categories=Science;
+Keywords=research;science;agent;paper;multimodal;
+StartupNotify=false

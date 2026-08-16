@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="512" height="512" viewBox="232 177 796 796">
+  <title>OmniScientist</title>
+  <desc>OmniScientist mark: six-circle motif rotated eight times in 45-degree steps.</desc>
+  <!--
+    唯一旋转中心：630, 575
+    六圆母版采用极坐标：
+      距离 360 / 326 / 274 / 235 / 206 / 181
+      角度 -90 / -73 / -60 / -86 / -72 / -57 度
+    下方八组只允许整体旋转，步长严格为 45 度。
+  -->
+  <defs>
+    <circle id="p1" cx="630" cy="215" r="38"/>
+    <circle id="p2" cx="725.31" cy="263.27" r="36.5"/>
+    <circle id="p3" cx="767" cy="337.71" r="26"/>
+    <circle id="p4" cx="646.39" cy="340.57" r="24"/>
+    <circle id="p5" cx="693.66" cy="379.09" r="18.5"/>
+    <circle id="p6" cx="728.58" cy="423.18" r="14"/>
+  </defs>
+
+  <!-- 第 1 组：0° -->
+  <g transform="rotate(0 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#0C75FC"/>
+    <use href="#p2" xlink:href="#p2" fill="#0A85F1"/>
+    <use href="#p3" xlink:href="#p3" fill="#0991E9"/>
+    <use href="#p4" xlink:href="#p4" fill="#0C79FA"/>
+    <use href="#p5" xlink:href="#p5" fill="#0A86F1"/>
+    <use href="#p6" xlink:href="#p6" fill="#0894E7"/>
+  </g>
+
+  <!-- 第 2 组：45° -->
+  <g transform="rotate(45 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#079FE0"/>
+    <use href="#p2" xlink:href="#p2" fill="#10A8BF"/>
+    <use href="#p3" xlink:href="#p3" fill="#18AEA6"/>
+    <use href="#p4" xlink:href="#p4" fill="#09A1D8"/>
+    <use href="#p5" xlink:href="#p5" fill="#11A8BD"/>
+    <use href="#p6" xlink:href="#p6" fill="#19B0A0"/>
+  </g>
+
+  <!-- 第 3 组：90° -->
+  <g transform="rotate(90 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#20B689"/>
+    <use href="#p2" xlink:href="#p2" fill="#42BD71"/>
+    <use href="#p3" xlink:href="#p3" fill="#5BC35E"/>
+    <use href="#p4" xlink:href="#p4" fill="#28B883"/>
+    <use href="#p5" xlink:href="#p5" fill="#44BE6F"/>
+    <use href="#p6" xlink:href="#p6" fill="#61C45A"/>
+  </g>
+
+  <!-- 第 4 组：135° -->
+  <g transform="rotate(135 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#79C949"/>
+    <use href="#p2" xlink:href="#p2" fill="#ABC034"/>
+    <use href="#p3" xlink:href="#p3" fill="#D1B824"/>
+    <use href="#p4" xlink:href="#p4" fill="#85C744"/>
+    <use href="#p5" xlink:href="#p5" fill="#AEBF33"/>
+    <use href="#p6" xlink:href="#p6" fill="#DAB721"/>
+  </g>
+
+  <!-- 第 5 组：180° -->
+  <g transform="rotate(180 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#FDB012"/>
+    <use href="#p2" xlink:href="#p2" fill="#FD8D22"/>
+    <use href="#p3" xlink:href="#p3" fill="#FC732E"/>
+    <use href="#p4" xlink:href="#p4" fill="#FDA816"/>
+    <use href="#p5" xlink:href="#p5" fill="#FD8B23"/>
+    <use href="#p6" xlink:href="#p6" fill="#FC6D31"/>
+  </g>
+
+  <!-- 第 6 组：225° -->
+  <g transform="rotate(225 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#FC543C"/>
+    <use href="#p2" xlink:href="#p2" fill="#F34554"/>
+    <use href="#p3" xlink:href="#p3" fill="#ED3966"/>
+    <use href="#p4" xlink:href="#p4" fill="#FA5042"/>
+    <use href="#p5" xlink:href="#p5" fill="#F34455"/>
+    <use href="#p6" xlink:href="#p6" fill="#EB376A"/>
+  </g>
+
+  <!-- 第 7 组：270° -->
+  <g transform="rotate(270 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#E52C7B"/>
+    <use href="#p2" xlink:href="#p2" fill="#C32A9F"/>
+    <use href="#p3" xlink:href="#p3" fill="#A929BB"/>
+    <use href="#p4" xlink:href="#p4" fill="#DD2C84"/>
+    <use href="#p5" xlink:href="#p5" fill="#C12AA1"/>
+    <use href="#p6" xlink:href="#p6" fill="#A328C1"/>
+  </g>
+
+  <!-- 第 8 组：315° -->
+  <g transform="rotate(315 630 575)">
+    <use href="#p1" xlink:href="#p1" fill="#8B27DB"/>
+    <use href="#p2" xlink:href="#p2" fill="#5B44E7"/>
+    <use href="#p3" xlink:href="#p3" fill="#365BF1"/>
+    <use href="#p4" xlink:href="#p4" fill="#802EDE"/>
+    <use href="#p5" xlink:href="#p5" fill="#5846E8"/>
+    <use href="#p6" xlink:href="#p6" fill="#2E60F3"/>
+  </g>
+</svg>
