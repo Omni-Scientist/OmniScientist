@@ -196,31 +196,21 @@ jobs:
           body: |
             ## 装
 
-            ```bash
-            # 终端 agent, macOS 与 Linux
-            curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh
+            粘一行到 Claude Code、Cursor、Codex，或者任何有 shell 的 agent 里，它会读安装
+            文档，把该装的装好，然后告诉你装了什么。
 
-            # 终端 agent, Windows
-            irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex
-
-            # 桌面工作台, macOS
-            curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniScientist-macos-arm64.tar.gz | tar -xz -C /Applications
+            ```text
+            Read https://omni-scientist.github.io/setup/install.md and install and configure the OmniScientist skill for this agent, following the steps.
             ```
 
-            Claude Code 里用的话下 `omnisci-skill.zip`，解到 `~/.claude/skills/`，不需要 API key。
+            桌面版和命令行版的口令在 <https://omni-scientist.github.io/>。
 
-            桌面版 Linux 包解开跑 `./install.sh`。完整说明在
-            [`docs/INSTALL.md`](https://github.com/Omni-Scientist/OmniScientist/blob/main/docs/INSTALL.md)。
+            ## 包
 
-            终端安装不会触发 Gatekeeper：隔离属性是浏览器下载时打的，`curl` 不打。
-
-            ## 验过什么，没验什么
-
-            macOS 桌面版在真机 macOS 15.7.7 / M3 上过了 14 项验收（安装、启动、菜单栏、
-            退出、单实例、只绑 127.0.0.1、令牌处理、签名往返）。**Windows 版由 CI 编出来，
-            没有人在 Windows 上跑过。**
-
-            出 PDF 需要 python3 和 tectonic。桌面版会检测并引导安装，其余三种要自己装一次；
-            缺 tectonic 时流程照跑，停在 `.tex` 并说明。
+            | 下这个 | 得到 |
+            |---|---|
+            | `OmniScientist-*-windows-x64.zip`、`OmniScientist-macos-*.tar.gz`、`OmniScientist-linux-*.tar.gz` | 桌面工作台 |
+            | `omnisci-windows-x86_64.exe`、`omnisci-darwin-*`、`omnisci-linux-*` | 命令行 agent |
+            | `omnisci-skill.zip` | skill，解到 `~/.claude/skills/` |
 
             校验：`sha256sum -c SHA256SUMS`
