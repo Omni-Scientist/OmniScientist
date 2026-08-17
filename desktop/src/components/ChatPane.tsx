@@ -1,7 +1,6 @@
 import {
   ArrowDown,
   ArrowUp,
-  AtSign,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -15,12 +14,10 @@ import {
   Image,
   ListTree,
   LoaderCircle,
-  MoreHorizontal,
   Languages,
   PanelLeftOpen,
   PanelRightOpen,
   Paperclip,
-  Plus,
   ShieldCheck,
   Table2,
   X,
@@ -414,10 +411,10 @@ function AssistantMessage({
         {message.citations?.length ? (
           <div className="citation-strip" aria-label={t("引用来源")}>
             {message.citations.map((citation) => (
-              <button type="button" key={citation.id} title={citation.source}>
+              <span className="citation-chip" key={citation.id} title={citation.source}>
                 <span>{citation.id}</span>
                 {citation.label}
-              </button>
+              </span>
             ))}
           </div>
         ) : null}
@@ -442,8 +439,6 @@ function AssistantMessage({
               {copied ? <Check size={14} /> : <Copy size={14} />}
               {copied ? t("已复制") : t("复制")}
             </button>
-            <button type="button"><Plus size={14} /> {t("加入笔记")}</button>
-            <button type="button" aria-label={t("更多操作")}><MoreHorizontal size={15} /></button>
           </div>
         ) : null}
       </div>
@@ -592,9 +587,6 @@ export function ChatPane({
           >
             <PanelRightOpen size={18} />
           </IconButton>
-          <IconButton label={t("更多会话操作")}>
-            <MoreHorizontal size={18} />
-          </IconButton>
         </div>
       </header>
 
@@ -658,12 +650,10 @@ export function ChatPane({
               <IconButton label={t("选择数据")} tone="quiet" onClick={() => setPickerOpen(true)}>
                 <Paperclip size={17} />
               </IconButton>
-              <IconButton label={t("引用工作区内容")} tone="quiet"><AtSign size={17} /></IconButton>
-              <button className="skill-selector" type="button">
+              <span className="skill-selector">
                 <FlaskConical size={14} />
                 OmniScientist
-                <ChevronDown size={13} />
-              </button>
+              </span>
             </div>
             {busy ? (
               <button className="send-button is-stop" type="button" aria-label={t("研究运行中")} title={t("研究运行中")} disabled>

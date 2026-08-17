@@ -1011,7 +1011,7 @@ button {
   margin: 14px 0 16px;
 }
 
-.citation-strip button {
+.citation-strip .citation-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1025,12 +1025,12 @@ button {
   cursor: pointer;
 }
 
-.citation-strip button:hover {
+.citation-strip .citation-chip:hover {
   border-color: #bccdc4;
   color: var(--accent);
 }
 
-.citation-strip button span {
+.citation-strip .citation-chip span {
   display: grid;
   place-items: center;
   width: 16px;

@@ -1235,7 +1235,7 @@ textarea:focus-visible,
   margin: 18px 0;
 }
 
-.citation-strip button {
+.citation-strip .citation-chip {
   min-height: 32px;
   gap: 6px;
   padding: 4px 9px 4px 5px;
@@ -1245,7 +1245,7 @@ textarea:focus-visible,
   font-size: var(--text-xs);
 }
 
-.citation-strip button span {
+.citation-strip .citation-chip span {
   width: 20px;
   height: 20px;
   font-size: var(--text-2xs);
