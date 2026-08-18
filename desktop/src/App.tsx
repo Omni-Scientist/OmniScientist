@@ -632,8 +632,23 @@ export default function App() {
     );
   }
 
-  if (!session) {
-    const missingKey = /API key|api_key|通道/.test(bootError ?? "");
+  // 没配 key 就把整个界面换成一块"还差一步"的空屏，是不对的：人第一次打开
+  // 看到的应该是这个产品长什么样，然后被告知去左下角填 key。所以这里造一个
+  // 本地占位会话照常渲染，输入框置灰并写清楚该去哪儿点。
+  const missingKey = /API key|api_key|凭据|通道/.test(bootError ?? "");
+  const workspaceSession: ChatSession | null = session ?? (missingKey ? {
+    id: "pending-setup",
+    title: t("新研究会话"),
+    preview: "",
+    updatedAt: "",
+    status: "idle",
+    workspace: WORKSPACE_LABEL,
+    model: "",
+    group: "今天",
+    messages: [],
+  } : null);
+
+  if (!workspaceSession) {
     return (
       <div className="app-empty">
         <img src="/assets/omni-logo.svg" alt="" />
@@ -702,7 +717,8 @@ export default function App() {
       ) : null}
 
       <ChatPane
-        session={session}
+        session={workspaceSession}
+        needsKey={missingKey}
         draft={draft}
         leftOpen={leftOpen}
         workbenchOpen={workbenchOpen}
@@ -719,6 +735,11 @@ export default function App() {
         }}
         onDraftChange={updateDraft}
         onSend={(content, dataPath) => void sendMessage(content, dataPath)}
+        onStop={() => {
+          // 停不掉也不该把界面卡在"运行中"：真正的收尾由服务端那一轮结束时发的
+          // assistant.completed 决定，这里只负责把请求发出去。
+          if (selectedId) void transport.stopRun(selectedId).catch(() => {});
+        }}
         onOpenArtifact={openArtifact}
         onOpenTrace={openTrace}
       />

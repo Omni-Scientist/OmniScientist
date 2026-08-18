@@ -147,16 +147,43 @@ Then launch it from the application menu, or run `omnisci-desktop`. `./install.s
 
 ### Windows
 
-Not packaged. The launcher has the Windows code paths, but there is no `.exe`
-packaging and nothing has been verified, so it is not in the release. Use the CLI.
+Download `OmniScientist-<version>-windows-x64.zip` from the release, unzip it, and
+run `install.ps1`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+It installs a Start Menu shortcut for the current user and needs no administrator
+rights. The `.exe` is built on a real Windows runner, so it carries publisher
+metadata and does not pop a console window.
+
+Two things to know. The `bash` tool needs a native bash: install
+[Git for Windows](https://git-scm.com/download/win). WSL's bash is refused on
+purpose, because it runs in a different operating system and would silently
+produce results in the wrong filesystem. And SmartScreen will warn on first run,
+because the binary is not signed with a paid certificate: choose "More info" then
+"Run anyway".
+
+Windows on ARM works through the x64 emulation layer; there is no separate ARM64
+build.
 
 ### What it does at startup
 
-Binds `127.0.0.1` only, takes a free port, generates a one-time token, and hands the
-browser that token once in the URL. The server immediately exchanges it for an
-`HttpOnly` `SameSite=Strict` cookie and redirects, so the token does not stay in the
-address bar or in history. A lock file at `~/.omnisci/desktop.lock` keeps a second
-launch from starting a second service. Logs are under `~/.omnisci/logs/`.
+Binds `127.0.0.1` only, takes a free port, generates a random 32-byte token, and hands
+the browser that token once in the URL. The server sets it as an `HttpOnly`
+`SameSite=Strict` cookie and redirects, so it leaves the address bar and does not end
+up in history.
+
+The token is the credential itself, not a one-shot code exchanged for a different
+session key: presenting it again during the process's lifetime yields the cookie
+again. It lives in `~/.omnisci/desktop.lock` (mode `0600`, ACL-restricted on Windows)
+and in the line the launcher prints on startup. Since the service is loopback-only,
+what this protects against is other software on the machine reaching the API, not a
+remote attacker. Treat that startup line the way you would treat a password.
+
+A lock file at `~/.omnisci/desktop.lock` keeps a second launch from starting a second
+service. Logs are under `~/.omnisci/logs/`.
 
 Credentials are the same `~/.omnisci/env` as the CLI. Without them it still starts and
 the interface offers to set them.
@@ -268,5 +295,5 @@ prints the traceback rather than swallowing it, and the fix is normally in the
 analysis script the agent just wrote.
 
 **The desktop page says it needs the launcher.** You opened `127.0.0.1:<port>` without
-the one-time token, or the cookie expired after a day. Reopen from the menu-bar item,
-or restart it.
+the token, or the cookie expired after a day. Reopen from the menu-bar item, or
+restart it.

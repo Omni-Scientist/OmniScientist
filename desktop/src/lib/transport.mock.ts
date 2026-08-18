@@ -11,6 +11,10 @@ import { t } from "./i18n";
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 export const mockTransport: ResearchTransport = {
+  async stopRun() {
+    // 演示 transport 没有真的运行可停
+  },
+
   async listSessions() {
     return structuredClone(demoSessionSummaries);
   },

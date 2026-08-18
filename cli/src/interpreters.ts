@@ -21,7 +21,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 import { dataDir } from "./paths.ts";
 
@@ -56,6 +56,13 @@ function dedupe(items: string[][]): string[][] {
 // ------------------------------------------------------------------ python
 
 let pythonCache: string[] | null = null;
+/**
+ * 缓存的这个结果还会不会变。
+ *
+ * 受管 venv 和 OMNISCI_PYTHON 是最优先的两个来源，选中它们就到顶了，可以焊死。
+ * 选中的是系统 python 则只是「此刻没有更好的」，venv 一旦建出来就该让位。
+ */
+let pythonCacheFinal = false;
 let basePythonCache: string[] | null = null;
 
 /**
@@ -71,11 +78,17 @@ function probePython(argv: string[]): boolean {
   return r.status === 0 && (r.stdout || "").trim() === "3";
 }
 
-/** 受管虚拟环境里的解释器，没建就是 null。 */
-export function venvPython(): string | null {
+/**
+ * 受管虚拟环境里的解释器，没建就是 null。
+ *
+ * base 只给测试注入用：os.homedir() 不看 process.env.HOME，dataDir() 也就没法
+ * 靠改环境变量支开。不注入的话，测试结果取决于跑测试这台机器上到底有没有建过
+ * venv —— 本机建了就红、没建就绿，这种测试等于没有。
+ */
+export function venvPython(base: string = dataDir()): string | null {
   const path = process.platform === "win32"
-    ? join(dataDir(), "venv", "Scripts", "python.exe")
-    : join(dataDir(), "venv", "bin", "python3");
+    ? join(base, "venv", "Scripts", "python.exe")
+    : join(base, "venv", "bin", "python3");
   return existsSync(path) ? path : null;
 }
 
@@ -114,9 +127,24 @@ function resolvePython(useVenv: boolean): string[] {
 /**
  * 跑 python 用的 argv 前缀，比如 `["/usr/bin/python3"]` 或者 `["py", "-3"]`。
  * 一个能用的都没有就抛，错误里带上试过哪些，不然用户无从下手。
+ *
+ * **受管 venv 是应用跑起来之后才建的**，而这个缓存在启动体检时就已经填好了。
+ * 只算一次的话：用户在界面上点「安装依赖」，bootstrap 把 numpy 装进 venv，
+ * 论文工具却继续用启动时那个系统 python，界面报「依赖就绪」，实际 import 不到，
+ * 干净机器上第一次装完等于没装。桌面版的 launcher 和 gateway 还是同一个进程，
+ * 躲不掉。实测：before=/usr/bin/python3 → 建 venv → after 还是 /usr/bin/python3。
+ *
+ * 所以选中系统 python 时缓存只算暂定，venv 一出现就重算。重算最多发生一次
+ * （venv 不会再变回不存在），不是每次调用都掏钱。
  */
 export function pythonCommand(): string[] {
-  if (!pythonCache) pythonCache = resolvePython(true);
+  if (pythonCache && !pythonCacheFinal && venvPython()) pythonCache = null;
+  if (!pythonCache) {
+    pythonCache = resolvePython(true);
+    const venv = venvPython();
+    pythonCacheFinal = Boolean((process.env.OMNISCI_PYTHON || "").trim())
+      || (venv !== null && pythonCache[0] === venv);
+  }
   return pythonCache;
 }
 
@@ -201,6 +229,29 @@ export function shellCommand(): string {
 /** 只给测试用：清掉本进程的探测缓存。 */
 export function resetInterpreterCache(): void {
   pythonCache = null;
+  pythonCacheFinal = false;
   basePythonCache = null;
   shellCache = null;
+}
+
+/**
+ * 把受管的 tectonic 和 venv 挂到 PATH 前面。**每次要用之前都调一遍。**
+ *
+ * 只在启动时算一次是不够的：安装文档让 agent 把 tectonic 直接放进
+ * <dataDir>/bin，那通常发生在应用已经跑起来之后。启动时那个目录还不存在，
+ * PATH 就永远没有它，于是 paper_cli 的 shutil.which("tectonic") 查不到，
+ * 一轮跑完停在 .tex 不出 PDF —— 而 tectonic 明明就躺在盘上。
+ * 实测踩过：应用 19:40 起，tectonic 19:42 装，21:00 跑出来的还是 tex_only。
+ *
+ * 代价只有两次 existsSync，可以随便调。
+ */
+export function ensureManagedToolsOnPath(base: string = dataDir()): void {
+  const wanted = [join(base, "bin")];
+  const venv = venvPython(base);
+  if (venv) wanted.push(dirname(venv));
+
+  const current = (process.env.PATH || "").split(delimiter).filter(Boolean);
+  const missing = wanted.filter((dir) => existsSync(dir) && !current.includes(dir));
+  if (!missing.length) return;
+  process.env.PATH = [...missing, ...current].join(delimiter);
 }

@@ -14,6 +14,7 @@ import type { SessionSummary } from "../types";
 import { IconButton } from "./IconButton";
 import { SettingsDialog } from "./SettingsDialog";
 import { loadSettings, settingsAvailable, type SettingsState } from "../lib/settings";
+import { WorkspaceRootPicker } from "./WorkspaceRootPicker";
 import { t } from "../lib/i18n";
 
 interface ConversationSidebarProps {
@@ -52,11 +53,17 @@ export function ConversationSidebar({
   const [query, setQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<SettingsState | null>(null);
+  const [rootPickerOpen, setRootPickerOpen] = useState(false);
+  const [workspaceRoot, setWorkspaceRoot] = useState("");
 
   // 桌面版才有本机后端；演示版读不到，底部就退回一句中性的说明。
   useEffect(() => {
     if (!settingsAvailable) return;
     let cancelled = false;
+    // 健康接口里带着工作目录的绝对路径，选择器拿它当起点
+    fetch("/api/health").then((r) => r.json()).then((d: { workspace?: string }) => {
+      if (d?.workspace) setWorkspaceRoot(d.workspace);
+    }).catch(() => {});
     loadSettings()
       .then((next) => { if (!cancelled) setSettings(next); })
       .catch(() => { /* 读不到就按未配置显示，点开设置里会给出真正的错误 */ });
@@ -121,7 +128,12 @@ export function ConversationSidebar({
         ) : null}
       </label>
 
-      <div className="workspace-switcher">
+      <button
+        type="button"
+        className="workspace-switcher"
+        onClick={() => setRootPickerOpen(true)}
+        title={t("换一个工作目录")}
+      >
         <div className="workspace-icon">
           <FolderGit2 size={16} />
         </div>
@@ -130,7 +142,17 @@ export function ConversationSidebar({
           <strong>{workspaceName}</strong>
         </div>
         <ChevronDown size={15} />
-      </div>
+      </button>
+
+      <WorkspaceRootPicker
+        open={rootPickerOpen}
+        current={workspaceRoot}
+        onClose={() => setRootPickerOpen(false)}
+        onPicked={() => {
+          // 服务端正在原地重启，端口和令牌不变，等它起来再刷新这一页。
+          setTimeout(() => window.location.reload(), 1200);
+        }}
+      />
 
       <nav className="session-list">
         {/* 这两个是**判等用的键**，服务器就是按这个字面量分组的，不能翻。
@@ -154,7 +176,10 @@ export function ConversationSidebar({
                   </span>
                   <span className="session-row-bottomline">
                     <StatusMark status={session.status} />
-                    <span className="session-preview">{session.preview}</span>
+                    {/* preview 有两个来源：用户消息的摘录（原样显示），
+                        以及后端的状态串（"已停止" / "没跑完，可继续"）。
+                        查不到就回落成原文，所以摘录不会被误translate。 */}
+                    <span className="session-preview">{t(session.preview)}</span>
                   </span>
                   <span className="session-more" aria-hidden="true">
                     <MoreHorizontal size={15} />

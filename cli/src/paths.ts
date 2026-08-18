@@ -14,8 +14,17 @@ import { join } from "node:path";
 /** 凭据、会话库、更新检查状态都在这儿。 */
 export const OMNI_HOME = join(homedir(), ".omnisci");
 
-/** 应用数据目录，按平台惯例。落盘的 skill、受管 venv、受管 tectonic 放这里。 */
+/**
+ * 应用数据目录，按平台惯例。落盘的 skill、受管 venv、受管 tectonic 放这里。
+ *
+ * OMNISCI_DATA_DIR 可以整个挪走。两个用处：一是测试能把受管 venv 支到临时目录，
+ * 否则 os.homedir() 不看 process.env.HOME，测试结果取决于跑测试这台机器上
+ * 恰好有没有建过 venv；二是 Windows 上的 %LOCALAPPDATA% 带空格或非 ASCII 时，
+ * 有些 python 工具链会翻车，用户得有地方把它挪开。
+ */
 export function dataDir(): string {
+  const override = (process.env.OMNISCI_DATA_DIR || "").trim();
+  if (override) return override;
   if (platform() === "darwin") return join(homedir(), "Library", "Application Support", "OmniScientist");
   if (platform() === "win32") {
     return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "OmniScientist");

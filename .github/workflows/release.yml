@@ -40,6 +40,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Intel Mac 不发（决定于 2026-08-18）。install.sh 在 Intel Mac 上仍会去下
+          # omnisci-darwin-x86_64 并拿到 404，这是明知的取舍，不是漏了。
           - { runner: ubuntu-latest,    asset: omnisci-linux-x86_64 }
           - { runner: ubuntu-24.04-arm, asset: omnisci-linux-arm64 }
           - { runner: macos-latest,     asset: omnisci-darwin-arm64 }
@@ -170,8 +172,13 @@ jobs:
         with: { name: skill, path: artifacts/* }
 
   publish:
+    # 以前这里是 `if: always() && needs.version.result == 'success'`：cli / desktop /
+    # skill 任何一个挂掉，publish 照样跑，把"当时凑得齐的那些"当正式版发出去
+    # （draft: false）。少了哪个平台没人拦，用户下载到 404 才知道。
+    #
+    # 现在按 needs 的默认语义：全都成功才发。Linux ARM 那一格自己带
+    # continue-on-error，它挂了不算 job 失败，所以"ARM 可缺席"这条原意还在。
     needs: [version, cli, desktop, skill]
-    if: always() && needs.version.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -184,6 +191,36 @@ jobs:
           ( cd release && cat *.sha256 > SHA256SUMS 2>/dev/null || true )
           echo "### 本次实际产出" >> "$GITHUB_STEP_SUMMARY"
           ls -lh release | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # "job 成功了"不等于"产物真的在这儿"。安装脚本和自动更新是照着固定名字去取的，
+      # 少一个就是线上 404，而这种 404 只有那个平台的用户会遇到，我们自己看不见。
+      # 所以按名单点一遍，缺了就别发。
+      #
+      # 名单跟 install.sh / install.ps1 / assetPatternFor() 是同一套名字，
+      # check_parity.py 会盯着它们别漂。
+      - name: 点名单：必须有的产物一个都不能少
+        run: |
+          missing=0
+          for asset in \
+            omnisci-linux-x86_64 \
+            omnisci-darwin-arm64 \
+            omnisci-windows-x86_64.exe \
+            omnisci-skill.zip \
+            OmniScientist-linux-x86_64.tar.gz \
+            OmniScientist-macos-arm64.tar.gz
+          do
+            if [ -f "release/$asset" ]; then
+              echo "  有 $asset"
+            else
+              echo "::error::缺少必须的产物 $asset"
+              missing=1
+            fi
+          done
+          # Linux ARM 允许缺席（runner 在私有仓库上不免费），缺了只提醒不拦。
+          for asset in omnisci-linux-arm64 OmniScientist-linux-arm64.tar.gz; do
+            [ -f "release/$asset" ] || echo "::warning::$asset 这次没出来（Linux ARM 允许缺席）"
+          done
+          exit $missing
       - uses: softprops/action-gh-release@v2
         with:
           name: OmniScientist ${{ needs.version.outputs.value }}

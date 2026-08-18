@@ -1,5 +1,28 @@
 import { expect, test } from "@playwright/test";
 
+// 这套用例的定位符全是中文标签，而界面默认渲染英文（i18n.tsx 的 detect() 一律返回
+// "en"，是有意的）。默认一改，7 个用例全红，而它们红的原因跟被测的行为毫无关系 ——
+// 实际发生过：整套 e2e 死了 0 passed 都没人发现，因为 CI 根本不跑它。
+//
+// 所以这里把语言钉死。语言默认值本身由下面单独一个用例盯着，不靠这些用例顺带验证。
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("omnisci.lang", "zh");
+  });
+});
+
+test("the interface ships in English unless the user picks otherwise", async ({ page }) => {
+  // 上面的 beforeEach 把语言钉成了中文，这一个用例要测真实默认值，得先擦掉。
+  await page.addInitScript(() => {
+    localStorage.removeItem("omnisci.lang");
+  });
+  await page.goto("/");
+  // 挑跟视口无关的东西断言：侧边栏在窄视口下会收成抽屉，拿它当锚点测的是布局不是语言。
+  // 语言开关最直接：界面是英文时，它提供的是"切换到中文"。
+  await expect(page.getByRole("button", { name: "切换到中文" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open sidebar" })).toBeVisible();
+});
+
 test("desktop keeps chat and research outputs side by side", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");

@@ -4,7 +4,9 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { ApprovalPolicy } from "../../cli/src/approval.ts";
 import { loadGuardConfig } from "../../cli/src/guard.ts";
 import { loadHooks } from "../../cli/src/hooks.ts";
-import { AgentLoop, UNATTENDED_MAX_TURNS, type Presenter } from "../../cli/src/loop.ts";
+import {
+  AgentLoop, UNATTENDED_MAX_TURNS, type Presenter,
+} from "../../cli/src/loop.ts";
 import { ModelClient } from "../../cli/src/model.ts";
 import { Session } from "../../cli/src/session.ts";
 import { loadSkills, makeUseSkillTool, skillsPromptBlock, type Skill } from "../../cli/src/skills.ts";
@@ -13,8 +15,10 @@ import { StandardsEngine } from "../../cli/src/standards.ts";
 import { makeExploreTool } from "../../cli/src/subagent.ts";
 import { defaultRegistry, makeContext, type Registry } from "../../cli/src/tools/index.ts";
 import { setVisionResolver } from "../../cli/src/tools/vision.ts";
+import { ensureManagedToolsOnPath } from "../../cli/src/interpreters.ts";
 import { gatherSignals } from "../../cli/src/triggers.ts";
 import { discoverArtifacts, type ArtifactFile } from "./artifacts.ts";
+import { runOutcome } from "./run-outcome.ts";
 import { currentModelConfig, currentVisionConfig } from "./model-config.ts";
 import { WebSessionStore } from "./session-store.ts";
 import { hydrateToolOutputs, sanitizeToolOutput } from "./tool-output.ts";
@@ -97,6 +101,11 @@ interface WebRuntime {
    */
   dataPath: string;
   persistTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * 这一轮的中止闸。停止按钮、关掉浏览器、进程退出都拨它。
+   * AgentLoop 只在"消息数组合法"的位置响应，所以停下来之后还能接着聊。
+   */
+  abort?: AbortController;
 }
 
 const runtimes = new Map<string, WebRuntime>();
@@ -299,12 +308,17 @@ async function createRuntime(preferredId?: string): Promise<WebRuntime> {
     skillsPromptBlock(skills),
   );
 
-  const history = requestedInternalId ? session.history() : [];
+  // 老会话可能带着"有 tool_calls 却缺回执"的旧伤，那种会话每次发消息都被判 400。
+  // 补洞在 session.history() 里做（CLI 的 resume 走同一条路），这里只负责说出来。
+  const history = requestedInternalId
+    ? session.history((n) => console.log(`[omnisci] 修补了 ${n} 条缺失的工具回执`))
+    : [];
   const messages = history.some((message) => (
     message as { role?: unknown }
   ).role === "system")
     ? history
     : [{ role: "system", content: systemPrompt }, ...history];
+
   const restoredStatus = stored?.status === "running" ? "idle" : stored?.status;
 
   const runtime: WebRuntime = {
@@ -496,6 +510,10 @@ function traceOf(messageId: string, steps: ToolStep[]): ResearchTrace | undefine
 }
 
 async function runMessage(runtime: WebRuntime, userText: string, emit: Emit): Promise<void> {
+  // 每轮都刷一次：tectonic 常常是在应用起来之后才被装进 <dataDir>/bin 的
+  // （安装文档就是这么写的），只在启动时算一次的话，装了也用不上，
+  // 一轮跑完停在 .tex 不出 PDF。
+  ensureManagedToolsOnPath();
   const messageId = `assistant-${crypto.randomUUID()}`;
   const userMessage: ChatMessage = {
     id: `user-${crypto.randomUUID()}`,
@@ -587,7 +605,7 @@ async function runMessage(runtime: WebRuntime, userText: string, emit: Emit): Pr
   try {
     // 跟 CLI 的 --data 一条路：浏览器里跑一篇论文同样是长流水线，没人会在
     // 中途打字说"继续"。用默认的 80 轮会在感知做完、论文没编时被砍断。
-    result = await loop.run(runtime.messages, UNATTENDED_MAX_TURNS);
+    result = await loop.run(runtime.messages, UNATTENDED_MAX_TURNS, runtime.abort?.signal);
   } catch (error) {
     const detail = errorMessage(error);
     const failure = `本地研究运行失败：${detail}`;
@@ -611,13 +629,16 @@ async function runMessage(runtime: WebRuntime, userText: string, emit: Emit): Pr
     emit({ type: "run.failed", messageId, error: detail });
     return;
   }
-  const steps = live.steps.map((step) => ({ ...step }));
+  const steps = live.steps.map((step) => step.status === "running"
+    ? { ...step, status: "failed" as const, detail: "已停止" }
+    : { ...step });
+  const outcome = runOutcome(result);
   const answer: ChatMessage = {
     id: messageId,
     role: "assistant",
     author: "OmniScientist",
     time: nowLabel(),
-    content: publicContent(live.content()),
+    content: `${publicContent(live.content())}${outcome.note}`.trim(),
     blocks: live.blocks.map((block) => block.type === "tool"
       ? { ...block, step: { ...block.step } }
       : { ...block, content: publicContent(block.content) }),
@@ -625,8 +646,8 @@ async function runMessage(runtime: WebRuntime, userText: string, emit: Emit): Pr
     ...(steps.length
       ? {
           toolRun: {
-            title: "研究运行完成",
-            summary: `${steps.length} 个步骤 · ${result.turns} 轮`,
+            title: outcome.title,
+            summary: `${steps.length} 个步骤 · ${result.turns} 轮${outcome.summarySuffix}`,
             steps,
             trace: traceOf(messageId, steps),
           },
@@ -637,8 +658,8 @@ async function runMessage(runtime: WebRuntime, userText: string, emit: Emit): Pr
   if (draftIndex >= 0) runtime.chatMessages[draftIndex] = answer;
   else runtime.chatMessages.push(answer);
   syncRuntimeArtifacts(runtime, messageId, emit);
-  runtime.status = "complete";
-  runtime.preview = "本轮研究已完成";
+  runtime.status = outcome.status;
+  runtime.preview = outcome.preview;
   persistRuntime(runtime, true);
   emit({ type: "assistant.completed", message: answer });
 }
@@ -797,6 +818,15 @@ export const apiFetch = async (request: Request): Promise<Response> => {
       }
     }
 
+    const stopMatch = /^\/api\/v1\/sessions\/([^/]+)\/stop$/.exec(url.pathname);
+    if (request.method === "POST" && stopMatch) {
+      const runtime = runtimes.get(decodeURIComponent(stopMatch[1]!));
+      if (!runtime) return json({ error: "没有这个本地会话" }, 404);
+      if (!runtime.active) return json({ stopped: false, reason: "这个会话没有在跑" });
+      runtime.abort?.abort();
+      return json({ stopped: true });
+    }
+
     const sessionMatch = /^\/api\/v1\/sessions\/([^/]+)$/.exec(url.pathname);
     if (request.method === "GET" && sessionMatch) {
       const id = decodeURIComponent(sessionMatch[1]!);
@@ -864,6 +894,7 @@ export const apiFetch = async (request: Request): Promise<Response> => {
       // 只有界面真的选了目录才覆盖。续聊时前端不一定重发，
       // 无条件赋值会把已经记住的 case 目录抹掉，产物又找不到了。
       if (wantedData) runtime.dataPath = wantedData;
+      runtime.abort = new AbortController();
       runtime.active = true;
 
       const encoder = new TextEncoder();
@@ -916,6 +947,9 @@ export const apiFetch = async (request: Request): Promise<Response> => {
         },
         cancel() {
           streamClosed = true;
+          // 以前这里只是停止推送事件，AgentLoop 在服务端继续跑到底：关掉标签页
+          // 之后模型照调、工具照跑、钱照烧，人完全看不见。拨闸才是真停。
+          runtime.abort?.abort();
         },
       });
       return new Response(stream, {

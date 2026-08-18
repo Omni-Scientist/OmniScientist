@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   Languages,
   PanelLeftOpen,
+  Square,
   PanelRightOpen,
   Paperclip,
   ShieldCheck,
@@ -47,6 +48,9 @@ interface ChatPaneProps {
   leftOpen: boolean;
   workbenchOpen: boolean;
   busy: boolean;
+  onStop: () => void;
+  /** 还没配研究模型的 key。输入框置灰，并指路到左下角。 */
+  needsKey?: boolean;
   onToggleLeft: () => void;
   onToggleWorkbench: () => void;
   onDraftChange: (value: string) => void;
@@ -141,10 +145,29 @@ function MessageBody({ content }: { content: string }) {
   );
 }
 
+/**
+ * 等待指示器：项目那个点阵 logo 在转。
+ *
+ * 用 logo 而不是通用的 loader 图标，是因为等待窗口有时候很长（会话一长，
+ * 模型吐第一个字可能要几十秒），这段时间里屏幕上唯一在动的东西就是它，
+ * 它得让人一眼认出"是这个程序在想，不是卡死了"。
+ */
+function LogoSpinner({ size = 15 }: { size?: number }) {
+  return (
+    <img
+      src="/assets/omni-logo.svg"
+      className="logo-spinner"
+      style={{ width: size, height: size }}
+      alt=""
+      aria-hidden="true"
+    />
+  );
+}
+
 function WaitingLine({ label }: { label: string }) {
   return (
     <div className="thinking-line" role="status">
-      <span className="thinking-orbit" />
+      <LogoSpinner size={14} />
       <span>{label}</span>
     </div>
   );
@@ -290,7 +313,7 @@ function AssistantTimeline({
           onClick={() => setExpanded((value) => !value)}
         >
           <span className="live-run-icon">
-            {streaming ? <LoaderCircle size={14} /> : <Check size={13} />}
+            {streaming ? <LogoSpinner size={15} /> : <Check size={13} />}
           </span>
           <strong>{statusLabel}</strong>
           <small>{steps.length ? t("{0}/{1} 个工具完成", completeCount, steps.length) : t("准备研究上下文")}</small>
@@ -301,8 +324,8 @@ function AssistantTimeline({
       ) : null}
       <div className="message-timeline">
         {visibleBlocks.map((block) => <TimelineBlock block={block} key={block.id} />)}
-        {expanded && streaming && phase === "thinking" && blocks.length > 0 ? (
-          <WaitingLine label={t("继续分析中")} />
+        {expanded && streaming && phase === "thinking" ? (
+          <WaitingLine label={blocks.length ? t("继续分析中") : t("正在读取上下文")} />
         ) : null}
         {expanded && streaming && phase === "writing" ? <span className="streaming-caret" aria-hidden="true" /> : null}
       </div>
@@ -335,8 +358,10 @@ function ToolRun({
         <span className="tool-run-icon">
           {running ? <LoaderCircle size={15} /> : <CheckCircle2 size={15} />}
         </span>
+        {/* title 是后端给的（"研究运行完成" / "已停止" / "这一轮没跑完"），
+            以前直接裸渲染，英文界面上就露出一句中文。 */}
         <span className="tool-run-title">
-          <strong>{run.title}</strong>
+          <strong>{t(run.title)}</strong>
           <small>{run.summary}</small>
         </span>
         {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
@@ -493,6 +518,8 @@ export function ChatPane({
   leftOpen,
   workbenchOpen,
   busy,
+  onStop,
+  needsKey = false,
   onToggleLeft,
   onToggleWorkbench,
   onDraftChange,
@@ -531,7 +558,7 @@ export function ChatPane({
 
   const submit = () => {
     const content = draft.trim();
-    if (!content || busy) return;
+    if (!content || busy || needsKey) return;
     followOutputRef.current = true;
     setAwayFromBottom(false);
     onSend(content, dataPath || undefined);
@@ -609,6 +636,15 @@ export function ChatPane({
               />
             ),
           )}
+
+          {/* 点了发送但服务端还没回第一个事件的那段空窗。以前这里什么都没有，
+              网络稍慢就像卡死了；现在至少有个转的 logo 说明请求已经出去了。 */}
+          {busy && session.messages[session.messages.length - 1]?.role === "user" ? (
+            <div className="pending-turn" role="status">
+              <LogoSpinner size={16} />
+              <span>{t("正在连接本地研究进程…")}</span>
+            </div>
+          ) : null}
         </div>
       </div>
       {awayFromBottom ? (
@@ -641,7 +677,10 @@ export function ChatPane({
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={busy ? t("OmniScientist 正在处理当前任务…") : t("告诉 OmniScientist 接下来研究什么")}
+            placeholder={needsKey
+              ? t("先在左下角填一个模型 API key，然后就能开始研究")
+              : busy ? t("OmniScientist 正在处理当前任务…") : t("告诉 OmniScientist 接下来研究什么")}
+            disabled={needsKey}
             aria-label={t("消息输入")}
             rows={1}
           />
@@ -656,8 +695,14 @@ export function ChatPane({
               </span>
             </div>
             {busy ? (
-              <button className="send-button is-stop" type="button" aria-label={t("研究运行中")} title={t("研究运行中")} disabled>
-                <LoaderCircle size={18} />
+              <button
+                className="send-button is-stop"
+                type="button"
+                aria-label={t("停止研究")}
+                title={t("停止研究")}
+                onClick={onStop}
+              >
+                <Square size={15} />
               </button>
             ) : (
               <button

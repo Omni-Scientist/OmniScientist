@@ -17,10 +17,16 @@ $Repo    = 'Omni-Scientist/OmniScientist'
 $BinDir  = if ($env:BIN_DIR) { $env:BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'OmniScientist\bin' }
 $Version = if ($env:VERSION) { $env:VERSION } else { 'latest' }
 
+# ARM64 也拿 x64 那个包。Windows on ARM 透明模拟 x64，跑得动；
+# 而以前这里映射到 omnisci-windows-arm64.exe，那个资产从来没有被构建过，
+# 于是 ARM 机器上必然 404 —— 报"没有你这个架构的构建"都比拿到 404 强。
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
   'AMD64' { 'x86_64' }
-  'ARM64' { 'arm64'  }
+  'ARM64' { 'x86_64' }
   default { throw "没有 $($env:PROCESSOR_ARCHITECTURE) 架构的构建" }
+}
+if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
+  Write-Host 'Windows ARM64：装 x64 版本，由系统模拟执行。'
 }
 
 $asset = "omnisci-windows-$arch.exe"

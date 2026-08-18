@@ -12,7 +12,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, appendFileSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 
@@ -31,18 +31,63 @@ const OMNI_HOME = join(homedir(), ".omnisci");
 const LOG_DIR = join(OMNI_HOME, "logs");
 const LOCK_FILE = join(OMNI_HOME, "desktop.lock");
 
-/** 应用数据目录，按平台惯例。venv 和 tectonic 装在这里，不污染工作区。 */
 import {
-  basePythonCommand, pythonCommand, venvPython,
+  basePythonCommand, ensureManagedToolsOnPath, pythonCommand, venvPython,
 } from "../../cli/src/interpreters.ts";
-
-function dataDir(): string {
-  if (platform() === "darwin") return join(homedir(), "Library", "Application Support", "OmniScientist");
-  if (platform() === "win32") return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "OmniScientist");
-  return join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "omniscientist");
-}
+// 数据目录必须跟 venvPython() 用的是同一个来源。这里以前自己抄了一份同样逻辑的
+// dataDir()，两边碰巧一致所以看不出问题；一旦有了 OMNISCI_DATA_DIR 覆盖，
+// bootstrap 会把 venv 建到一个地方，venvPython() 去另一个地方找，谁都不报错。
+import { dataDir } from "../../cli/src/paths.ts";
 
 /** 抛出来的东西不一定是 Error，直接模板拼会变成 [object Object]。 */
+/** 把工作目录写进 ~/.omnisci/env，下次启动（以及重启）就认它。 */
+function persistWorkspaceRoot(target: string): void {
+  const file = process.env.OMNISCI_ENV_FILE || join(OMNI_HOME, "env");
+  const line = `OMNISCI_WORKSPACE_ROOT=${target}`;
+  let body = "";
+  try { body = readFileSync(file, "utf-8"); } catch { /* 还没有这个文件 */ }
+  const kept = body.split(/\r?\n/).filter((l) => !/^\s*OMNISCI_WORKSPACE_ROOT\s*=/.test(l));
+  while (kept.length && !kept[kept.length - 1]!.trim()) kept.pop();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, [...kept, line, ""].join("\n"), { mode: 0o600 });
+  log(`工作目录写入 ${file}`);
+}
+
+/**
+ * 换目录之后原地重启。
+ *
+ * WORKSPACE_ROOT 在 gateway 里是模块级常量，还在初始化时被会话库捕获，热改要连带
+ * 重建一串东西；重启是最不容易出错的做法，而且换工作区本来就该是干净的新开始。
+ * 端口和令牌传给子进程，所以浏览器那一页刷新就能接着用。
+ */
+function restartWith(target: string): void {
+  const port = server?.port ?? opts.port;
+
+  // 编译成单文件之后 argv 的形状跟脚本模式不一样：argv[0] 是字符串 "bun"，
+  // argv[1] 是虚拟路径 /$bunfs/root/…，两个都没法拿去 spawn。真正的可执行文件
+  // 是 process.execPath，用户参数从 argv[2] 开始。踩过一次：照 argv[0] 重启，
+  // 子进程根本起不来，端口空着，浏览器那一页直接死掉。
+  const passthrough: string[] = [];
+  const user = process.argv.slice(2);
+  for (let i = 0; i < user.length; i++) {
+    const arg = user[i]!;
+    if (arg === "--workspace" || arg === "-w" || arg === "--port" || arg === "-p") { i++; continue; }
+    if (arg === "--no-open") continue;
+    passthrough.push(arg);
+  }
+  const argv = [...passthrough, "--workspace", target, "--port", String(port), "--no-open"];
+
+  log(`重启到 ${target}，端口 ${port}`);
+  try { server?.stop(true); } catch { /* 已经停了 */ }
+  const child = spawn(process.execPath, argv, {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, OMNISCI_GATEWAY_TOKEN: TOKEN, OMNISCI_WORKSPACE_ROOT: target },
+  });
+  child.unref();
+  setTimeout(() => process.exit(EXIT_OK), 200);
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -391,14 +436,9 @@ function which(bin: string): string | null {
  * 返回 tex_only：只出 .tex 不出 PDF，还不报错。装了却用不上，最难查。
  */
 function exposeManagedTools(): void {
-  const dirs = [join(dataDir(), "bin")];
-  const python = venvPython();
-  if (python) dirs.push(dirname(python));
-  const existing = (process.env.PATH || "").split(delimiter).filter(Boolean);
-  const missing = dirs.filter((dir) => existsSync(dir) && !existing.includes(dir));
-  if (!missing.length) return;
-  process.env.PATH = [...missing, ...existing].join(delimiter);
-  log(`PATH 前置 ${missing.join(delimiter)}`);
+  const before = process.env.PATH;
+  ensureManagedToolsOnPath();          // 逻辑只有一份，见 cli/src/interpreters.ts
+  if (process.env.PATH !== before) log("PATH 前置了受管工具目录");
 }
 
 function requirementsPath(): string {
@@ -470,15 +510,28 @@ function run(bin: string, args: string[]): boolean {
   return r.status === 0;
 }
 
-function tectonicUrl(): string | null {
+/**
+ * 这个平台的 tectonic 下载地址，没有现成构建就是 null。
+ *
+ * Windows 只有 x86_64 的包，而且是 **.zip** 不是 .tar.gz。上游发布的资产名单
+ * （tectonic@0.17.0）里 windows 那两条是 -pc-windows-msvc.zip 和 -gnu.zip，
+ * 取 msvc 那个：它是官方 CI 的主构建。
+ *
+ * ARM64 Windows 上游没出包，返回 null，走"请自行安装"那条路。
+ */
+function tectonicUrl(): { url: string; zip: boolean } | null {
   const arch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : null;
   if (!arch) return null;
+  const base = `https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}`;
+  if (platform() === "win32") {
+    if (arch !== "x86_64") return null; // 上游没有 Windows ARM64 的构建
+    return { url: `${base}/tectonic-${TECTONIC_VERSION}-x86_64-pc-windows-msvc.zip`, zip: true };
+  }
   const target = platform() === "darwin" ? `${arch}-apple-darwin`
     : platform() === "linux" ? `${arch}-unknown-linux-musl`
     : null;
   if (!target) return null;
-  return `https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}`
-    + `/tectonic-${TECTONIC_VERSION}-${target}.tar.gz`;
+  return { url: `${base}/tectonic-${TECTONIC_VERSION}-${target}.tar.gz`, zip: false };
 }
 
 async function bootstrap(): Promise<void> {
@@ -510,19 +563,22 @@ async function bootstrap(): Promise<void> {
     if (!run(py, ["-m", "pip", "install", "--upgrade", "pip"])) note("升级 pip 失败，继续");
     if (!run(py, ["-m", "pip", "install", "-r", requirementsPath()])) { note("装 python 依赖失败"); return; }
 
-    const bundled = join(data, "bin", platform() === "win32" ? "tectonic.exe" : "tectonic");
+    const exe = platform() === "win32" ? "tectonic.exe" : "tectonic";
+    const bundled = join(data, "bin", exe);
     if (!existsSync(bundled) && !which("tectonic")) {
-      const url = tectonicUrl();
-      if (!url) {
-        note(`这个平台（${platform()}/${process.arch}）没有现成的 tectonic，请自行安装`);
+      const target = tectonicUrl();
+      if (!target) {
+        note(`这个平台（${platform()}/${process.arch}）上游没有现成的 tectonic，需要自己装；`
+          + "在那之前，一轮研究会停在 .tex，不出 PDF");
       } else {
         note(`下载 tectonic ${TECTONIC_VERSION}`);
-        const res = await fetch(url);
+        const res = await fetch(target.url);
         if (!res.ok) { note(`下载失败 HTTP ${res.status}`); return; }
-        const tgz = join(data, "tectonic.tar.gz");
-        writeFileSync(tgz, Buffer.from(await res.arrayBuffer()));
-        const ok = run("tar", ["-xzf", tgz, "-C", join(data, "bin"), "tectonic"]);
-        rmSync(tgz, { force: true });
+        const archive = join(data, target.zip ? "tectonic.zip" : "tectonic.tar.gz");
+        writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
+        // Windows 10 1803 起自带 bsdtar，zip 和 tar.gz 都认；-xf 让它自己判类型。
+        const ok = run("tar", ["-xf", archive, "-C", join(data, "bin"), exe]);
+        rmSync(archive, { force: true });
         if (!ok) { note("解压 tectonic 失败"); return; }
       }
     }
@@ -530,8 +586,14 @@ async function bootstrap(): Promise<void> {
     // 刚装出来的目录启动时还不存在，这里再挂一次，不然要重启才用得上。
     exposeManagedTools();
     const after = doctor();
-    bootstrapState.ok = Boolean(after.python?.ok && after.packages?.ok);
-    note(bootstrapState.ok ? "依赖就绪" : "依赖仍不完整，看上面的输出");
+    // tectonic 也要算进来。它缺席时论文流程会停在 .tex 不出 PDF，
+    // 而以前这里只看 python 和 packages，界面照样报"依赖就绪"——
+    // Windows 上尤其明显：那边根本没走过下载这条路，就绪永远是假的。
+    bootstrapState.ok = Boolean(after.python?.ok && after.packages?.ok && after.tectonic?.ok);
+    if (bootstrapState.ok) note("依赖就绪");
+    else if (after.python?.ok && after.packages?.ok) {
+      note("python 依赖就绪；tectonic 还缺，研究能跑完但只出 .tex 不出 PDF");
+    } else note("依赖仍不完整，看上面的输出");
   } catch (error) {
     note(`引导异常: ${String(error)}`);
   } finally {
@@ -587,7 +649,9 @@ process.env.OMNISCI = join(SKILL_DIR, "bin");
 process.env.OMNISCI_SKILLS_DIR = dirname(SKILL_DIR);
 exposeManagedTools();
 
-const TOKEN = randomBytes(32).toString("hex");
+// 换工作目录要重启进程。端口和令牌从环境里继承下来，浏览器那一页刷新就能接着用，
+// 不然每换一次目录就得重新拿一个带令牌的地址。
+const TOKEN = process.env.OMNISCI_GATEWAY_TOKEN || randomBytes(32).toString("hex");
 process.env.OMNISCI_WEB_TOKEN = TOKEN;
 process.env.OMNISCI_WORKSPACE_ROOT = opts.workspace;
 
@@ -654,6 +718,60 @@ try {
       if (!authed) {
         if (url.pathname.startsWith("/api/")) return Response.json({ error: "Unauthorized" }, { status: 401 });
         return new Response(DENIED, { status: 401, headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
+
+      // 给**人**用的目录浏览器，可以走到盘的任何地方。
+      //
+      // 这跟模型的文件访问是两回事：模型受 guard 和 ctx.resolve 约束，只能在工作目录里动。
+      // 这个接口只列目录名，不返回任何文件内容，而且只有拿着一次性令牌换来的 cookie
+      // 才调得动，也就是只有本机上启动这个程序的人。选自己的工作目录不该被拦。
+      if (request.method === "GET" && url.pathname === "/api/browse") {
+        const asked = url.searchParams.get("path") || "";
+        try {
+          const target = asked ? resolve(asked) : homedir();
+          const stat = statSync(target);
+          if (!stat.isDirectory()) return Response.json({ error: "这不是目录" }, { status: 400 });
+          const entries = readdirSync(target, { withFileTypes: true })
+            .filter((e) => !e.name.startsWith("."))
+            .filter((e) => {
+              try { return e.isDirectory() || statSync(join(target, e.name)).isDirectory(); }
+              catch { return false; }        // 权限不够的、坏掉的链接，跳过就是
+            })
+            .map((e) => e.name)
+            .sort((a, b) => a.localeCompare(b))
+            .slice(0, 500);
+          const up = dirname(target);
+          return Response.json({
+            path: target,
+            parent: up === target ? null : up,
+            home: homedir(),
+            entries,
+          });
+        } catch (error) {
+          return Response.json({ error: errorMessage(error) }, { status: 400 });
+        }
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/workspace") {
+        let body: { path?: unknown };
+        try { body = await request.json() as { path?: unknown }; }
+        catch { return Response.json({ error: "请求 JSON 无效" }, { status: 400 }); }
+        const wanted = typeof body.path === "string" ? body.path.trim() : "";
+        if (!wanted) return Response.json({ error: "没有给目录" }, { status: 400 });
+        let target: string;
+        try {
+          target = resolve(wanted);
+          if (!statSync(target).isDirectory()) throw new Error("这不是目录");
+          accessSync(target, fsConstants.R_OK | fsConstants.W_OK);
+        } catch (error) {
+          return Response.json({ error: `用不了这个目录：${errorMessage(error)}` }, { status: 400 });
+        }
+        if (resolve(opts.workspace) === target) return Response.json({ changed: false, path: target });
+
+        persistWorkspaceRoot(target);
+        // 先回话再重启，否则浏览器拿不到结果，只看到连接断了。
+        setTimeout(() => restartWith(target), 150);
+        return Response.json({ changed: true, path: target, restarting: true });
       }
 
       if (request.method === "GET" && url.pathname === "/api/doctor") {

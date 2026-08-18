@@ -123,4 +123,6 @@ export interface ResearchTransport {
   createSession(workspace: string): Promise<ChatSession>;
   /** dataPath 是界面上选的数据目录（相对工作区），不进用户可见的消息正文。 */
   sendMessage(sessionId: string, content: string, dataPath?: string): AsyncGenerator<TransportEvent>;
+  /** 停掉正在跑的那一轮。已经产出的东西保留，再发消息就接着做。 */
+  stopRun(sessionId: string): Promise<void>;
 }

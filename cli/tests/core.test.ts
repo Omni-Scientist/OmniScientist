@@ -6,7 +6,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { spawnSync } from "node:child_process";
 
 import { ApprovalPolicy } from "../src/approval.ts";
-import { AgentLoop, MAX_TURNS, UNATTENDED_MAX_TURNS, type Presenter } from "../src/loop.ts";
+import { Session } from "../src/session.ts";
+import {
+  AgentLoop, MAX_TURNS, repairToolCallGaps, STOPPED_TOOL_RESULT, UNATTENDED_MAX_TURNS,
+  type Presenter,
+} from "../src/loop.ts";
 import {
   DEFAULT_EFFORT, EFFORT_LEVELS, PROVIDERS, quirks, REASONING_HEADROOM,
   supportsEffort, tokenCapField, type ModelClient,
@@ -26,7 +30,9 @@ import {
   assetPatternFor, checkForUpdate, compareVersions, updateCheckDisabled, updateCommand,
 } from "../src/update.ts";
 import { columns, rule } from "../src/render/caps.ts";
-import { pythonCommand, resetInterpreterCache, shellCommand } from "../src/interpreters.ts";
+import {
+  ensureManagedToolsOnPath, pythonCommand, resetInterpreterCache, shellCommand, venvPython,
+} from "../src/interpreters.ts";
 
 const silentPresenter: Presenter = {
   turnStart() {},
@@ -905,6 +911,317 @@ describe("解释器探测", () => {
     if (process.platform === "win32") {
       // linux-gnu 说明这是 WSL 的 bash，不该被选中
       expect(/^(msys|cygwin)/.test(osType)).toBe(true);
+    }
+  });
+});
+
+describe("停止一轮研究", () => {
+  /** 造一个假模型：第一轮要求调两个工具，之后就说完了。 */
+  function twoToolModel(onTurn?: () => void) {
+    let call = 0;
+    return {
+      async streamTurn(_m: unknown[], _t: unknown[], _cb?: unknown, signal?: AbortSignal) {
+        call++;
+        onTurn?.();
+        if (signal?.aborted) {
+          const e = new Error("aborted"); e.name = "APIUserAbortError"; throw e;
+        }
+        if (call === 1) {
+          return {
+            message: {
+              role: "assistant", content: null,
+              tool_calls: [
+                { id: "a", type: "function", function: { name: "slow", arguments: "{}" } },
+                { id: "b", type: "function", function: { name: "slow", arguments: "{}" } },
+              ],
+            },
+            finishReason: "tool_calls",
+            usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0, cost: 0 },
+          };
+        }
+        return {
+          message: { role: "assistant", content: "done" },
+          finishReason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0, cost: 0 },
+        };
+      },
+    } as unknown as ModelClient;
+  }
+
+  /** 每个 tool_call 都必须有对应的 tool 消息，否则下一次请求会被判 400。 */
+  function assertValid(messages: any[]) {
+    const answered = new Set(messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id));
+    for (const m of messages) {
+      for (const c of m.tool_calls ?? []) {
+        expect(answered.has(c.id)).toBe(true);
+      }
+    }
+  }
+
+  function loopWith(model: ModelClient, onCall?: () => void) {
+    const registry = new Registry();
+    registry.add({
+      name: "slow", description: "slow", parameters: { type: "object" },
+      run: () => { onCall?.(); return "ok"; },
+    });
+    return new AgentLoop(model, registry, makeContext("/opt/omnisci"),
+      new ApprovalPolicy(true), silentPresenter);
+  }
+
+  test("轮次之间停：消息数组合法，标记 aborted", async () => {
+    const ac = new AbortController();
+    const loop = loopWith(twoToolModel(() => ac.abort()));   // 第一轮开始前就已经 abort
+    const messages: any[] = [{ role: "system", content: "s" }, { role: "user", content: "go" }];
+    const r = await loop.run(messages, 10, ac.signal);
+    expect(r.aborted).toBe(true);
+    expect(r.stoppedBecause).toBe("已停止");
+    assertValid(messages);
+  });
+
+  test("第一个工具跑完就停：第二个补回执，数组仍然合法", async () => {
+    const ac = new AbortController();
+    let ran = 0;
+    const loop = loopWith(twoToolModel(), () => { ran++; ac.abort(); });
+    const messages: any[] = [{ role: "system", content: "s" }, { role: "user", content: "go" }];
+    const r = await loop.run(messages, 10, ac.signal);
+
+    expect(r.aborted).toBe(true);
+    expect(ran).toBe(1);                       // 第二个工具没有被执行
+    assertValid(messages);                     // 但它的回执补上了
+    const stopped = messages.filter((m) => m.content === STOPPED_TOOL_RESULT);
+    expect(stopped.length).toBe(1);
+    expect(stopped[0].tool_call_id).toBe("b");
+  });
+
+  test("没有 signal 时行为和以前完全一样", async () => {
+    const loop = loopWith(twoToolModel());
+    const messages: any[] = [{ role: "system", content: "s" }, { role: "user", content: "go" }];
+    const r = await loop.run(messages, 10);
+    expect(r.aborted).toBeUndefined();
+    expect(r.stoppedBecause).toBe("stop");
+    assertValid(messages);
+  });
+
+  test("停完还能接着聊：再跑一次不抛，数组一直合法", async () => {
+    const ac = new AbortController();
+    const loop = loopWith(twoToolModel(), () => ac.abort());
+    const messages: any[] = [{ role: "system", content: "s" }, { role: "user", content: "go" }];
+    await loop.run(messages, 10, ac.signal);
+    assertValid(messages);
+
+    // 用户再发一条，换一个没被 abort 的 loop 继续
+    messages.push({ role: "user", content: "接着弄" });
+    const again = loopWith(twoToolModel());
+    const r2 = await again.run(messages, 10);
+    expect(r2.aborted).toBeUndefined();
+    assertValid(messages);
+  });
+});
+
+describe("停止的兜底", () => {
+  test("SDK 被 abort 时不抛异常、只是把流结束掉，也要判成已停止", async () => {
+    const ac = new AbortController();
+    const quietModel = {
+      async streamTurn(_m: unknown[], _t: unknown[], _cb?: unknown, signal?: AbortSignal) {
+        ac.abort();                       // 流"结束"了，但不抛
+        expect(signal).toBeDefined();
+        return {
+          message: { role: "assistant", content: "半句话" },
+          finishReason: "stop",
+          usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0, cost: 0 },
+        };
+      },
+    } as unknown as ModelClient;
+    const loop = new AgentLoop(quietModel, new Registry(), makeContext("/opt/omnisci"),
+      new ApprovalPolicy(true), silentPresenter);
+    const messages: unknown[] = [{ role: "system", content: "s" }, { role: "user", content: "go" }];
+    const r = await loop.run(messages, 5, ac.signal);
+    expect(r.aborted).toBe(true);
+    expect(r.stoppedBecause).toBe("已停止");
+  });
+});
+
+describe("受管 venv 建出来之后要接管解释器", () => {
+  // 实测踩过：桌面启动时体检调了一次 pythonCommand()，结果焊进模块级缓存。
+  // 用户随后在界面上点"安装依赖"，bootstrap 把 numpy 装进受管 venv，
+  // 而论文工具还在用启动时那个系统 python，界面报"依赖就绪"，实际 import 不到。
+  // launcher 和 gateway 是同一个进程，所以躲不掉。
+  test("启动时没有 venv，建出来之后 pythonCommand 要改口", () => {
+    const data = mkdtempSync("/tmp/omnisci-venv-");
+    const originalDataDir = process.env.OMNISCI_DATA_DIR;
+    const originalPython = process.env.OMNISCI_PYTHON;
+    try {
+      process.env.OMNISCI_DATA_DIR = data;
+      delete process.env.OMNISCI_PYTHON; // 显式指定会盖过 venv，这里要测的是没指定的那条路
+      resetInterpreterCache();
+
+      // 启动时：还没有 venv，拿到的是系统解释器
+      const before = pythonCommand();
+      expect(venvPython(data)).toBeNull();
+      expect(before[0]).not.toContain(data);
+
+      // 用真的 venv，不是造个假目录：假的过不了 probePython 那一关，
+      // 测出来的就不是"会不会改口"而是"会不会挑一个跑不起来的解释器"。
+      const made = spawnSync(before[0]!, [...before.slice(1), "-m", "venv", join(data, "venv")], {
+        encoding: "utf-8",
+      });
+      expect(made.status).toBe(0);
+      expect(venvPython(data)).not.toBeNull();
+
+      // 同一个进程，不重启，也得改口
+      expect(pythonCommand()[0]).toBe(venvPython(data)!);
+    } finally {
+      if (originalDataDir === undefined) delete process.env.OMNISCI_DATA_DIR;
+      else process.env.OMNISCI_DATA_DIR = originalDataDir;
+      if (originalPython !== undefined) process.env.OMNISCI_PYTHON = originalPython;
+      resetInterpreterCache();
+      rmSync(data, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("受管工具的 PATH", () => {
+  // 实测踩过：应用 19:40 起，agent 19:42 把 tectonic 放进 <dataDir>/bin，
+  // 21:00 跑出来的论文还是 tex_only——启动时算一次的 PATH 永远看不到它。
+  test("应用起来之后才出现的目录，也要能挂上", () => {
+    const home = mkdtempSync("/tmp/omnisci-path-");
+    const originalHome = process.env.HOME;
+    const originalPath = process.env.PATH;
+    try {
+      const bin = join(home, "bin");
+
+      // 目录还不存在：什么都不该加
+      process.env.PATH = "/usr/bin:/bin";
+      ensureManagedToolsOnPath(home);
+      expect(process.env.PATH).toBe("/usr/bin:/bin");
+
+      // 现在它出现了（模拟 agent 事后装 tectonic）
+      mkdirSync(bin, { recursive: true });
+      ensureManagedToolsOnPath(home);
+      expect(process.env.PATH!.split(":")[0]).toBe(bin);
+
+      // 再调不该重复追加
+      const once = process.env.PATH;
+      ensureManagedToolsOnPath(home);
+      expect(process.env.PATH).toBe(once);
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    }
+  });
+});
+
+describe("工具抛异常也不能留下非法消息数组", () => {
+  // 真机 400：An assistant message with 'tool_calls' must be followed by tool
+  // messages responding to each 'tool_call_id'.
+  // 起因是某一轮中途抛了异常，assistant 消息带着两个 tool_calls 入了队，
+  // 回执只补了一个，之后这个会话再也发不出消息。
+  function twoCallModel() {
+    return {
+      async streamTurn() {
+        return {
+          message: {
+            role: "assistant", content: null,
+            tool_calls: [
+              { id: "a", type: "function", function: { name: "boom", arguments: "{}" } },
+              { id: "b", type: "function", function: { name: "boom", arguments: "{}" } },
+            ],
+          },
+          finishReason: "tool_calls",
+          usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0, cost: 0 },
+        };
+      },
+    } as unknown as ModelClient;
+  }
+
+  function assertEveryCallAnswered(messages: any[]) {
+    const answered = new Set(messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id));
+    for (const m of messages) {
+      for (const c of m.tool_calls ?? []) {
+        expect(answered.has(c.id)).toBe(true);
+      }
+    }
+  }
+
+  test("钩子那一层抛异常，两个 tool_call 仍然都有回执", async () => {
+    const registry = new Registry();
+    registry.add({ name: "boom", description: "boom", parameters: { type: "object" }, run: () => "ok" });
+    const loop = new AgentLoop(
+      twoCallModel(), registry, makeContext("/opt/omnisci"), new ApprovalPolicy(true), silentPresenter,
+      () => {},
+      // 钩子在 runOne 内部、tool.run 的 try 之外，抛出来会掀掉整轮
+      { hooks: [{ matcher: ".*", command: "definitely-not-a-command", timeout: 1 }] as never },
+    );
+    const messages: any[] = [{ role: "system", content: "s" }, { role: "user", content: "go" }];
+    await loop.run(messages, 1).catch(() => {});      // 抛不抛都行，数组必须合法
+    assertEveryCallAnswered(messages);
+  });
+
+  test("工具本身抛异常，回执照样补齐", async () => {
+    const registry = new Registry();
+    registry.add({
+      name: "boom", description: "boom", parameters: { type: "object" },
+      run: () => { throw new Error("炸了"); },
+    });
+    const loop = new AgentLoop(twoCallModel(), registry, makeContext("/opt/omnisci"),
+      new ApprovalPolicy(true), silentPresenter);
+    const messages: any[] = [{ role: "system", content: "s" }, { role: "user", content: "go" }];
+    await loop.run(messages, 1).catch(() => {});
+    assertEveryCallAnswered(messages);
+  });
+});
+
+describe("修补历史会话里缺失的工具回执", () => {
+  test("补上之后每个 tool_call 都有回执，且插在正确位置", () => {
+    const messages: any[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: null, tool_calls: [{ id: "a" }, { id: "b" }] },
+      { role: "tool", tool_call_id: "a", content: "ok" },
+      { role: "user", content: "接着" },
+    ];
+    expect(repairToolCallGaps(messages)).toBe(1);
+    const idx = messages.findIndex((m) => m.tool_call_id === "b");
+    expect(idx).toBe(3);                       // 紧跟在那条 assistant 的已有回执之后
+    const answered = new Set(messages.filter((m) => m.role === "tool").map((m) => m.tool_call_id));
+    expect(answered.has("a")).toBe(true);
+    expect(answered.has("b")).toBe(true);
+  });
+
+  test("本来就完整的数组不动它", () => {
+    const messages: any[] = [
+      { role: "assistant", content: null, tool_calls: [{ id: "a" }] },
+      { role: "tool", tool_call_id: "a", content: "ok" },
+    ];
+    expect(repairToolCallGaps(messages)).toBe(0);
+    expect(messages.length).toBe(2);
+  });
+
+  // 光靠"剥掉末尾那条孤儿 assistant"挡不住半批工具的情况：最后一条是 tool，
+  // 剥离循环当场停手，前面那个没有回执的 call 原样留下，下一次请求还是 400。
+  // 这是 CLI --resume 和桌面恢复共用的那条路，以前只有桌面补了。
+  test("落盘的会话读回来时，中间的空洞也补上", () => {
+    const dir = mkdtempSync("/tmp/omnisci-session-");
+    try {
+      const session = Session.open(join(dir, "s.db"), dir, "test-model");
+      session.record("user", { role: "user", content: "go" });
+      // 一批两个工具，只写完了第一个的回执就崩了
+      session.record("assistant", {
+        role: "assistant", content: null, tool_calls: [{ id: "a" }, { id: "b" }],
+      });
+      session.record("tool", { role: "tool", tool_call_id: "a", content: "ok" });
+
+      let repaired = 0;
+      const history = session.history((n) => { repaired = n; }) as any[];
+      session.close();
+
+      expect(repaired).toBe(1);
+      // 末尾剥离不该把这条 assistant 剥掉，它有一半回执是真的
+      expect(history.some((m) => Array.isArray(m.tool_calls))).toBe(true);
+      const calls = history.flatMap((m) => (m.tool_calls ?? []).map((c: any) => c.id));
+      const answered = new Set(history.filter((m) => m.role === "tool").map((m) => m.tool_call_id));
+      for (const id of calls) expect(answered.has(id)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

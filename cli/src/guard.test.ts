@@ -7,8 +7,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { ApprovalPolicy } from "./approval.ts";
@@ -62,6 +62,24 @@ describe("命令拆分", () => {
     expect(commandName("sudo rm -rf /")).toBe("rm");
     expect(commandName("FOO=1 /bin/rm x")).toBe("rm");
     expect(commandName("nohup python3 t.py")).toBe("python3");
+  });
+
+  // 光靠「以 - 开头就跳过」会把选项的**取值**留下来当程序名：
+  // `env -u FOO bash` 里跳掉 -u 之后第一个裸 token 是 FOO。
+  // 于是 commandName 返回 FOO，innerCommand 不认它是包装器，内层一次都没判过。
+  test("包装器的选项取值不能被当成程序名", () => {
+    expect(commandName("env -u FOO bash -c 'x'")).toBe("bash");
+    expect(commandName("sudo -u nobody bash -lc 'x'")).toBe("bash");
+    expect(commandName("nice -n 10 bash -c 'x'")).toBe("bash");
+    expect(commandName("timeout 5 bash -c 'x'")).toBe("bash");
+    expect(commandName("ionice -c 2 -n 7 rm x")).toBe("rm");
+    expect(commandName("xargs -I {} rm {}")).toBe("rm");
+    expect(commandName("sudo -- rm -rf /")).toBe("rm");
+    // 捆绑写法的取值在同一个 token 里，不该再多吃一个
+    expect(commandName("nice -10 rm x")).toBe("rm");
+    expect(commandName("stdbuf -oL rm x")).toBe("rm");
+    // 取值跟程序名撞名也不能错位
+    expect(commandName("sudo -u bash bash -c 'x'")).toBe("bash");
   });
 });
 
@@ -127,6 +145,36 @@ describe("危险模式表", () => {
     const d = deny("git add . && rm -rf /");
     expect(d.verdict).toBe("deny");
     expect(d.rule).toBe("rm");
+  });
+
+  test("带选项的包装器绕不过去", () => {
+    // 实测漏过：简单形式（bash -c、sudo rm）一直拦得住，**带选项的包装**全部放行。
+    // 根因是选项取值被当成了程序名，于是后面那层 bash -c 不再被识别为包装器。
+    for (const cmd of [
+      `env -u FOO bash -c "rm -rf /tmp/target"`,
+      `env -i bash -c "rm -rf /"`,
+      `sudo -u nobody bash -lc "rm -rf /tmp/target"`,
+      `nice -n 10 bash -c "rm -rf /tmp/target"`,
+      `timeout 5 bash -c "rm -rf /tmp/target"`,
+      `ionice -c 2 -n 7 bash -c "rm -rf /"`,
+      // 不带内层 shell 的形态：rm 既不在行首也不在操作符后面，
+      // 命令位置匹配够不着，得靠剥掉包装之后再判一遍
+      "env -u FOO rm -rf /",
+      "sudo -u nobody rm -rf /",
+      "nice -n 10 rm -rf /",
+      "timeout 5 rm -rf /",
+      "env -u PATH -C /tmp qdel 123",
+    ]) {
+      expect(checkCommand(cmd, ctx).verdict).toBe("deny");
+    }
+  });
+
+  test("包装器不误伤正常命令", () => {
+    expect(deny("env FOO=1 python3 train.py").verdict).toBe("allow");
+    expect(deny("nice -n 10 python3 train.py").verdict).toBe("allow");
+    expect(deny("timeout 30 python3 train.py").verdict).toBe("allow");
+    expect(deny("sudo -u nobody ls /tmp").verdict).toBe("allow");
+    expect(deny("env -u LD_PRELOAD ls").verdict).toBe("allow");
   });
 
   test("藏在 bash -c 引号里的 rm 也拦住", () => {
@@ -204,6 +252,30 @@ describe("路径", () => {
   test("受保护路径写入拒、读取问", () => {
     expect(checkCommand("cp x .git/config", ctx).verdict).toBe("deny");
     expect(checkCommand("cat ~/.ssh/id_rsa", ctx).verdict).toBe("ask");
+  });
+
+  test("经符号链接写到工作区外也拒", () => {
+    // 只做词法解析（path.resolve）的话，root/link/x 字面上还在 root 底下，
+    // 于是 write-outside-workspace 放行，实际写到了链接指向的地方。
+    // 不需要谁来构造：git 能携带符号链接，node_modules 里遍地都是，
+    // 模型自己 ln -s 也不受拦。文件工具那边早就 realpath 了，shell 这条路漏着。
+    const outside = mkdtempSync(join(tmpdir(), "ph-escape-"));
+    symlinkSync(outside, join(root, "escape-link"));
+
+    const d = checkCommand("printf x > escape-link/escaped.txt", ctx);
+    expect(d.verdict).toBe("deny");
+    expect(d.rule).toBe("write-outside-workspace");
+
+    // 指回工作区内部的符号链接不能误伤
+    mkdirSync(join(root, "real-sub"), { recursive: true });
+    symlinkSync(join(root, "real-sub"), join(root, "inside-link"));
+    expect(checkCommand("printf x > inside-link/ok.txt", ctx).verdict).toBe("allow");
+  });
+
+  test("受保护路径经符号链接也算命中", () => {
+    // root/creds -> ~/.ssh：词法上是工作区内的普通目录，realpath 之后才看得出来
+    symlinkSync(join(homedir(), ".ssh"), join(root, "creds"));
+    expect(checkCommand("cp x creds/authorized_keys", ctx).verdict).toBe("deny");
   });
 
   test("chmod -R 打到家目录以上拒", () => {

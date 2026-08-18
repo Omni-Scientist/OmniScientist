@@ -24,6 +24,10 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const httpTransport: ResearchTransport = {
+  async stopRun(sessionId) {
+    await api(`/sessions/${encodeURIComponent(sessionId)}/stop`, { method: "POST" });
+  },
+
   /**
    * 只回真会话。演示数据属于网页版的 mock transport：装完桌面版第一次打开，
    * 用户看到的必须是自己的空工作台，不是别人的研究记录。

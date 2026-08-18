@@ -185,6 +185,47 @@ for token, why in (
 ):
     must_contain("cli/src/update.ts", token, why)
 
+# ---------------------------------------------------------------------------
+# 安装脚本能拼出来的产物名，release 必须真的构建
+#
+# 上面几条只验"名字的写法一致"，验不出"这个名字压根没人构建"。后者才是会让用户
+# 拿到 404 的那种，而且只有那个平台的用户会遇到，我们自己永远撞不到。
+#
+# 所以这里按平台把安装脚本会请求的名字全列出来，逐个回 release.yml 里点名。
+# 只认 matrix 里的那几行。不能拿整个文件去 grep：publish 那一步有一份"必须有的
+# 产物"名单，整文件搜索会搜到它，于是矩阵里删掉一格照样过 —— 自己证明自己。
+_release_body = read(".github/workflows/release.yml") or ""
+_matrix_lines = [ln for ln in _release_body.splitlines() if re.search(r"^\s*- \{ runner:", ln)]
+_matrix = "\n".join(_matrix_lines)
+
+# Intel Mac（omnisci-darwin-x86_64 / OmniScientist-macos-x86_64.tar.gz）**有意不发**，
+# 2026-08-18 定的。所以它不在下面这张名单里：install.sh 在 Intel Mac 上照样会拼出
+# 那个名字并拿到 404，那是已知取舍，不是这个脚本该拦的东西。
+for asset, why in (
+    ("asset: omnisci-linux-x86_64", "install.sh 的 Linux x86_64"),
+    ("asset: omnisci-linux-arm64", "install.sh 的 Linux arm64"),
+    ("asset: omnisci-darwin-arm64", "install.sh 的 Apple silicon"),
+    ("asset: omnisci-windows-x86_64.exe", "install.ps1（ARM64 也回落到这个）"),
+):
+    checked += 1
+    if asset not in _matrix:
+        problems.append(
+            ".github/workflows/release.yml 的 cli matrix 不构建 %r\n"
+            "      安装脚本会去下它，构建不出来就是那个平台的用户拿到 404：%s" % (asset, why))
+
+# 桌面包的名字在工作流里是 ${{ matrix.arch }} 拼的，抓不到字面量，所以点 matrix 本身。
+checked += 1
+if not re.search(r"os: macos,\s+arch: arm64\b", _matrix):
+    problems.append(
+        ".github/workflows/release.yml 的 desktop matrix 少了 macOS arm64\n"
+        "      官网 setup/mac-desktop.md 会去下它")
+
+# install.ps1 不许再去要一个没人构建的 ARM64 exe。
+must_not_match(
+    "install.ps1", r"omnisci-windows-arm64",
+    "上游没有 Windows ARM64 的构建；ARM64 应当回落到 x86_64，由系统模拟执行",
+)
+
 # 版本号躺在四个地方。它们只要有一处对不上，更新检查就会拿一个假的"当前版本"去跟
 # release tag 比：说低了就永远提示有新版本（用户更新完还在提示），说高了就永远不提示。
 VERSIONS = {

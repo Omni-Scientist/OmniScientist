@@ -83,6 +83,24 @@ jobs:
         run: bun run typecheck        # 浏览器侧和 Bun 侧两份 tsconfig 都要过
       - working-directory: desktop
         run: bun test gateway
+
+      # e2e 以前不在 CI 里跑，于是它整套死了 0 passed 都没人知道：界面默认语言
+      # 换成英文之后，7 个用例的中文定位符全部失配，而那跟被测行为毫无关系。
+      # 一个不跑的质量门比没有质量门更糟，它还占着"我们有 e2e"这个位置。
+      - name: 装 Playwright 浏览器
+        working-directory: desktop
+        run: bunx playwright install --with-deps chromium
+      - name: e2e
+        working-directory: desktop
+        run: bun run test:e2e
+      - name: 失败时留下截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failures
+          path: desktop/test-results/
+          if-no-files-found: ignore
+
       - name: 启动器能编出来并且真的起得来
         working-directory: desktop
         run: |

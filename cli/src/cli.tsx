@@ -581,8 +581,24 @@ async function main(): Promise<number> {
     messages.push({ role: "user", content });
     session.record("user", messages[messages.length - 1]);
 
+    // Ctrl-C 停这一轮，不退整个进程：跑一篇论文动辄几分钟几十次工具调用，
+    // 中途改主意只能杀进程的话，产出和会话都白扔。AgentLoop 只在消息数组合法的
+    // 位置响应，所以停完还能接着聊。
+    const abort = new AbortController();
+    const onSigint = () => {
+      if (abort.signal.aborted) process.exit(130);   // 再按一次才是真退出
+      out(`\n${DIM}正在停止…（再按一次 Ctrl-C 直接退出）${RESET}\n`);
+      abort.abort();
+    };
+    process.on("SIGINT", onSigint);
+
     // 无人值守跑论文给足预算，交互式还是默认。
-    const result = await loop.run(messages, dataArg ? UNATTENDED_MAX_TURNS : undefined);
+    let result: Awaited<ReturnType<AgentLoop["run"]>>;
+    try {
+      result = await loop.run(messages, dataArg ? UNATTENDED_MAX_TURNS : undefined, abort.signal);
+    } finally {
+      process.off("SIGINT", onSigint);
+    }
     const u = result.usage;
     // 详细用量挪到底部状态栏，这里只在不正常收尾时说一句
     lastUsage = { prompt: u.promptTokens, completion: u.completionTokens,

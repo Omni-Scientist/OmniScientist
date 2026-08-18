@@ -10,6 +10,8 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { repairToolCallGaps } from "./loop.ts";
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,
@@ -127,13 +129,23 @@ export class Session {
   /**
    * 把落盘的消息读回来，用于续会话。
    *
-   * 两道清洗，缺一个 resume 就是坏的：
+   * 三道清洗，缺一个 resume 就是坏的：
    * 1. 只留真正的对话消息。压缩记账那类行也写在 messages 表里但没有 content，
    *    原样重放会被 API 直接 400，压缩过的会话就再也续不上。
    * 2. 末尾如果是带 tool_calls 却没有对应 tool 回复的 assistant（工具跑一半被
    *    中断、审批抛错都会留下），必须丢掉。孤儿 tool_calls 下一轮必然 400。
+   * 3. **中间**的空洞也要补。第 2 步只剥尾巴，挡不住这种落盘状态：
+   *      assistant(tool_calls=[a, b])
+   *      tool(a)                       <- 最后一条是 tool，剥离循环当场停手
+   *    b 没有回执，assistant 却留下了，下一次请求照样 400。一批工具只写完一半
+   *    就崩溃/断电/被杀，就会留下这个形状。
+   *
+   * 补洞放在这儿而不是放在调用方：resume 有 CLI 和桌面网关两个入口，
+   * 以前只有网关补了，CLI 那条路一直漏着。放进来就没有哪个入口能忘掉它。
+   *
+   * onRepair 只是给调用方一个说话的机会（打日志），补不补跟它无关。
    */
-  history(): unknown[] {
+  history(onRepair?: (count: number) => void): unknown[] {
     const rows = this.db
       .query("SELECT payload FROM messages WHERE session_id = ? ORDER BY id")
       .all(this.id) as Array<{ payload: string }>;
@@ -159,6 +171,9 @@ export class Session {
       }
       break;
     }
+
+    const repaired = repairToolCallGaps(msgs);
+    if (repaired && onRepair) onRepair(repaired);
     return msgs;
   }
 

@@ -108,11 +108,13 @@ jobs:
                          --version "${{ steps.version.outputs.value }}" --out dist-arm64
           ./build-app.sh --binary ../../dist-desktop/omnisci-desktop-darwin-x64 \
                          --version "${{ steps.version.outputs.value }}" --out dist-x86_64
-          # The install line in the README selects with `uname -m`, so the file
-          # names have to match what that prints.
+          # Same names release.yml publishes, and the same names assetPatternFor()
+          # matches. This workflow is a build check, not a publisher, but if the
+          # names drift from the released ones the check stops checking the
+          # thing that ships.
           mkdir -p out
-          cp dist-arm64/OmniScientist-*-arm64.tar.gz   out/OmniScientist-arm64.tar.gz
-          cp dist-x86_64/OmniScientist-*-x86_64.tar.gz out/OmniScientist-x86_64.tar.gz
+          cp dist-arm64/OmniScientist-*-arm64.tar.gz   out/OmniScientist-macos-arm64.tar.gz
+          cp dist-x86_64/OmniScientist-*-x86_64.tar.gz out/OmniScientist-macos-x86_64.tar.gz
           ls -la out
 
       - name: Verify what we are about to ship
@@ -120,7 +122,7 @@ jobs:
         run: |
           for arch in arm64 x86_64; do
             work=$(mktemp -d)
-            tar -xzf "out/OmniScientist-$arch.tar.gz" -C "$work"
+            tar -xzf "out/OmniScientist-macos-$arch.tar.gz" -C "$work"
             app="$work/OmniScientist.app"
             codesign --verify --deep --strict --verbose=2 "$app"
             plutil -lint "$app/Contents/Info.plist"
@@ -140,12 +142,9 @@ jobs:
           path: desktop/packaging/macos/out/*.tar.gz
           if-no-files-found: error
 
-      - name: Attach to the release
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "${GITHUB_REF_NAME}" \
-            desktop/packaging/macos/out/OmniScientist-arm64.tar.gz \
-            desktop/packaging/macos/out/OmniScientist-x86_64.tar.gz \
-            --clobber
+# There used to be a "gh release upload" step here, gated on
+# `github.ref_type == 'tag'`. This workflow has no tag trigger, so it could
+# never run -- but it carried the old asset names and no `permissions:` block,
+# so whoever re-added a tag trigger would have shipped wrongly-named assets and
+# then hit a 403. release.yml publishes both macOS architectures; this file only
+# checks that they build.

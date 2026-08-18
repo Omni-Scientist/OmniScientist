@@ -260,6 +260,7 @@ export class ModelClient {
     messages: unknown[],
     tools: unknown[],
     onText?: (chunk: string) => void,
+    signal?: AbortSignal,
   ): Promise<Turn> {
     const stream = await this.client.chat.completions.create({
       model: this.model,
@@ -269,7 +270,7 @@ export class ModelClient {
       stream_options: { include_usage: true },
       ...tokenCapField(this.model, this.maxTokens, this.effort),
       ...quirks(this.provider, this.model, tools.length > 0, this.effort),
-    } as never);
+    } as never, signal ? { signal } : undefined);
 
     const parts: string[] = [];
     const acc = new Map<number, { id: string; name: string; args: string }>();

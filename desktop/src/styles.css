@@ -846,6 +846,42 @@ button {
   font-size: 11px;
 }
 
+/* 等待时唯一在动的东西：项目 logo 慢转。比通用 loader 图标更能说明"是它在想"。
+   转速刻意放慢到 2.4s，快转看着焦躁，而这个状态可能要持续几十秒。 */
+.logo-spinner {
+  flex: none;
+  animation: logo-spin 2.4s linear infinite;
+}
+
+@keyframes logo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 关掉动画偏好的人不该被转圈晃，但仍要看到"它在忙"，所以留一个呼吸的透明度。 */
+@media (prefers-reduced-motion: reduce) {
+  .logo-spinner {
+    animation: logo-breathe 1.6s ease-in-out infinite;
+  }
+
+  @keyframes logo-breathe {
+    50% {
+      opacity: 0.45;
+    }
+  }
+}
+
+/* 发送之后、服务端第一个事件到达之前的占位行 */
+.pending-turn {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin: 4px 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .thinking-orbit {
   width: 13px;
   height: 13px;
@@ -1359,6 +1395,11 @@ button {
 .send-button.is-stop {
   background: #f1e9e8;
   color: var(--red);
+  cursor: pointer;
+}
+
+.send-button.is-stop:hover {
+  background: #e8dad8;
 }
 
 .composer-status {

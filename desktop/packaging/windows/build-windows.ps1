@@ -102,7 +102,10 @@ OmniScientist Desktop $Version ($Arch)
 运行日志是：%USERPROFILE%\.omnisci\logs
 
 第一次运行时，界面会检查 Python 3.10+、科学计算包和 tectonic；缺少的依赖可以从工作台引导安装。
-若安装了 WSL，Windows 版的 bash 工具默认通过 WSL 执行。可用 OMNISCI_SHELL=cmd 或 OMNISCI_SHELL=bash 覆盖。
+
+bash 工具需要原生 bash，装 Git for Windows 即可（https://git-scm.com/download/win）。
+WSL 的 bash 会被拒绝：它跑在另一个操作系统里，看到的是 /mnt/c/... 而不是 C:\...，
+也拿不到本进程的环境变量，命令会以难以察觉的方式出错。要指定别的用 OMNISCI_SHELL。
 "@ | Set-Content -Encoding UTF8 (Join-Path $Stage "README.txt")
 
     $Archive = Join-Path $Out "$PackageName.zip"

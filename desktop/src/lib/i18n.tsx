@@ -21,18 +21,6 @@ export type Lang = "zh" | "en";
 const STORAGE_KEY = "omnisci.lang";
 
 const EN: Record<string, string> = {
-  "查看目录结构": "List directory",
-  "读取研究文件": "Read research file",
-  "检索工作区": "Search workspace",
-  "运行分析命令": "Run analysis command",
-  "检查相关上下文": "Inspect context",
-  "编译论文": "Compile paper",
-  "校验研究结果": "Verify results",
-  "浏览工作区顶层": "Browsing the workspace root",
-  "检索工作区中的相关内容": "Searching the workspace",
-  "本轮工具轨迹": "Tool trace for this turn",
-  "研究文件": "research file",
-  "研究产物": "artifact",
   " · 视觉未配置": " · vision not configured",
   "+ 添加模型": "+ Add model",
   "2 个步骤 · 演示模式": "2 steps · demo mode",
@@ -55,6 +43,7 @@ const EN: Record<string, string> = {
   "{0}{1}输出": "{0} {1} output",
   "{0}输出已复制": "{0} output copied",
   "{0}，可横向滚动": "{0} (scrolls horizontally)",
+  "上一层": "Up one level",
   "下载 Overleaf 包": "Download Overleaf bundle",
   "下载 {0}": "Download {0}",
   "不设置": "Off",
@@ -71,6 +60,8 @@ const EN: Record<string, string> = {
   "保存": "Save",
   "保存中": "Saving",
   "修正": "Revised",
+  "停止研究": "Stop the run",
+  "先在左下角填一个模型 API key，然后就能开始研究": "Add a model API key in the bottom left corner, then you can start",
   "先点测试": "Run the test first",
   "全屏查看研究记录": "View research log full screen",
   "全屏查看运行轨迹": "View run trace full screen",
@@ -81,11 +72,11 @@ const EN: Record<string, string> = {
   "关闭面板": "Close panel",
   "写入研究产物": "Write a research artifact",
   "准备研究上下文": "Preparing research context",
+  "切换中": "Switching",
   "切换到英文": "Switch to Chinese",
   "刚刚": "just now",
   "删除": "Delete",
   "删除这个模型": "Remove this model",
-  "加入笔记": "Add to notes",
   "加载研究 Skill": "Load the research skill",
   "发送消息": "Send message",
   "取消": "Cancel",
@@ -93,6 +84,7 @@ const EN: Record<string, string> = {
   "只能浏览工作区内部": "Browsing is limited to the workspace",
   "启用中": "Applying",
   "告诉 OmniScientist 接下来研究什么": "Tell OmniScientist what to investigate next",
+  "回到家目录": "Go to the home directory",
   "回到最新消息": "Jump to latest",
   "图表": "Figure",
   "在新窗口打开 {0}": "Open in a new window: {0}",
@@ -124,7 +116,6 @@ const EN: Record<string, string> = {
   "已脱敏：不含内部提示词、绝对路径与原始数据": "Redacted: no internal prompts, absolute paths, or raw data",
   "已配置": "Configured",
   "开不了新会话：{0}": "Cannot start a new session: {0}",
-  "引用工作区内容": "Reference workspace content",
   "引用来源": "Sources",
   "当前会话 · {0} 项输出": "This session · {0} outputs",
   "当前工作区": "Current workspace",
@@ -137,6 +128,8 @@ const EN: Record<string, string> = {
   "执行失败": "Execution failed",
   "执行已脱敏的分析命令": "Run a redacted analysis command",
   "换一个": "Replace",
+  "换一个工作目录": "Change the working directory",
+  "换目录会重开本地服务，这一页会自动接回来": "Changing it restarts the local service; this page reconnects on its own",
   "接口地址": "Endpoint",
   "搜索对话": "Search conversations",
   "收起": "Collapse",
@@ -152,8 +145,6 @@ const EN: Record<string, string> = {
   "无法创建本地会话：{0}": "Could not create a local session: {0}",
   "无法连接本地后端：{0}": "Could not reach the local backend: {0}",
   "暂无产物": "No artifacts yet",
-  "更多会话操作": "More session actions",
-  "更多操作": "More actions",
   "更新研究产物": "Update a research artifact",
   "最终论文": "Final paper",
   "有新版本 {0}": "New version {0}",
@@ -169,12 +160,18 @@ const EN: Record<string, string> = {
   "本地研究运行失败：{0}": "Local research run failed: {0}",
   "本地运行失败": "Local run failed",
   "本轮产物": "Artifacts this turn",
+  "本轮工具轨迹": "Tool trace for this turn",
   "本轮研究已完成": "This research run is complete",
   "查看完整轨迹": "View full trace",
+  "查看目录结构": "List directory",
+  "校验研究结果": "Verify results",
   "检查中…": "Checking…",
   "检查当前工作区": "Inspect the current workspace",
   "检查数据并提出可验证的研究假设": "Inspect the data and propose a testable hypothesis",
   "检查更新": "Check for updates",
+  "检查相关上下文": "Inspect context",
+  "检索工作区": "Search workspace",
+  "检索工作区中的相关内容": "Searching the workspace",
   "模型 ID": "Model ID",
   "模型": "Model",
   "模型设置": "Model settings",
@@ -187,9 +184,11 @@ const EN: Record<string, string> = {
   "正在用": "Active",
   "正在研究": "Researching",
   "正在读取…": "Loading…",
+  "正在读取上下文": "Reading the context",
   "正在读取当前配置…": "Loading current settings…",
   "正在输出结果": "Writing results",
   "正在运行工具": "Running tools",
+  "正在连接本地研究进程…": "Connecting to the local research process…",
   "此步骤没有可展示的额外输出。": "This step produced no additional output.",
   "此步骤生成的产物": "Artifacts from this step",
   "此类型暂无产物": "No artifacts of this kind yet",
@@ -200,6 +199,7 @@ const EN: Record<string, string> = {
   "测试中": "Testing",
   "测试成功": "Test passed",
   "测试通过之后才能启用": "Test must pass before this can be enabled",
+  "浏览工作区顶层": "Browsing the workspace root",
   "消息输入": "Message input",
   "清空搜索": "Clear search",
   "演示模式": "Demo mode",
@@ -209,9 +209,14 @@ const EN: Record<string, string> = {
   "版本 {0}": "Version {0}",
   "生成产物": "Artifacts",
   "用这个文件夹": "Use this folder",
+  "用这个目录": "Use this directory",
   "界面演示，未接本机后端": "UI demo, no local backend connected",
+  "目录路径": "Directory path",
+  "研究产物": "artifact",
+  "研究会话、数据和产物都放在这个目录下": "Sessions, data and artifacts all live under this directory",
   "研究工作台": "Research workbench",
   "研究工作台已就绪": "Research workbench ready",
+  "研究文件": "research file",
   "研究模型": "Research model",
   "研究记录": "Research log",
   "研究运行中": "Research running",
@@ -224,16 +229,24 @@ const EN: Record<string, string> = {
   "筛选运行轨迹": "Filter run trace",
   "继续分析中": "Still analyzing",
   "继续现有论文，先审阅最近的 PDF": "Continue the current paper, starting from the latest PDF",
+  "编译论文": "Compile paper",
   "视觉模型": "Vision model",
   "论文": "Paper",
   "语言": "Language",
   "请求 JSON 无效": "Invalid request JSON",
+  "读取研究文件": "Read research file",
   "读取配置中…": "Loading settings…",
   "调整工作台宽度": "Resize workbench",
   "路径": "Path",
   "过去 7 天": "Previous 7 days",
   "运行 Python 分析": "Run Python analysis",
+  // 后端产出的运行状态串。它们走 t()，查不到就回落成中文原文，
+  // 所以这几条缺一条就是英文界面上冒出一句中文。
+  "已停止": "Stopped",
+  "这一轮没跑完": "This run did not finish",
+  "没跑完，可继续": "Unfinished, can resume",
   "运行中": "Running",
+  "运行分析命令": "Run analysis command",
   "运行摘要": "Run summary",
   "运行轨迹": "Run trace",
   "返回研究记录": "Back to research log",
@@ -243,15 +256,25 @@ const EN: Record<string, string> = {
   "还没有研究会话。新建一个，把数据交给它，然后说清楚你想研究什么。": "No research sessions yet. Create one, hand it your data, and say what you want to investigate.",
   "还没有配置模型 API key。点左下角的设置填一个，再开始研究。": "No model API key configured yet. Open settings at the bottom left, add one, then start researching.",
   "还没有配置视觉模型。点左下角设置，在「视觉模型」里选一个并填上它的 key。": "No vision model configured yet. Open settings at the bottom left, pick one under \\u201cVision model\\u201d and add its key.",
+  "这个目录下没有子目录": "No subdirectories here",
   "这个目录是空的": "This folder is empty",
   "选中：{0}": "Selected: {0}",
+  "选择工作目录": "Choose a working directory",
   "选择数据": "Select data",
   "（不推理）": "(no reasoning)",
   "（最强）": "(highest)",
   "，已是最新": " · up to date",
 };
 
-/** 没存过就看浏览器：中文环境给中文，其余一律英文。 */
+/**
+ * 界面语言。**当前一律英文**，包括中文浏览器。
+ *
+ * 这是有意的（面向英文受众发布），不是漏了分支。原来的浏览器嗅探留在下面那行里，
+ * 想恢复就是把 `? "en"` 改回 `? "zh"`。手动存过 localStorage 的仍然按存的来。
+ *
+ * 注释写"中文环境给中文"而代码返回英文，曾经让审计把它当成 bug 报上来，
+ * 所以这里把意图写清楚。
+ */
 function detect(): Lang {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -260,7 +283,6 @@ function detect(): Lang {
     // 隐私模式下 localStorage 会抛，那就当没存过
   }
   const nav = typeof navigator === "undefined" ? "" : navigator.language || "";
-  // 演示构建：默认英文（原逻辑 nav.startsWith("zh") ? "zh" : "en"）
   return nav.toLowerCase().startsWith("zh") ? "en" : "en";
 }
 

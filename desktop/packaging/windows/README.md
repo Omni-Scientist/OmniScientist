@@ -29,26 +29,27 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 它只安装当前用户的开始菜单快捷方式，不需要管理员权限。卸载默认保留工作区、
 会话和依赖；如果确认要删运行数据，再执行 `uninstall.ps1 -PurgeData`。
 
-## WSL 命令后端
+## 命令后端：需要原生 bash
 
-Windows 下模型生成的 `bash` 工具会按以下顺序选择执行器：
+模型生成的 `bash` 工具在 Windows 上**只接受原生 bash**，也就是 Git for Windows
+自带的那个（`$OSTYPE` 以 `msys` 或 `cygwin` 开头）。没装就直接报错，不会退而求其次。
 
-1. `OMNISCI_SHELL` 显式指定的 `wsl`、`bash` 或 `cmd`；
-2. 已安装的 `wsl.exe`；
-3. `bash.exe`（例如 Git Bash）；
-4. `cmd.exe`。
+装它：<https://git-scm.com/download/win>。默认安装位置会被自动找到，
+装完重开 OmniScientist 即可。想指到别处用 `$env:OMNISCI_SHELL`。
 
-安装 WSL 后无需把项目复制进 Linux 文件系统；Windows 工作区会转换成 `/mnt/c/...`
-传给 WSL。若工作区位于自定义挂载点，可设置：
-
-```powershell
-$env:OMNISCI_SHELL = "wsl"
-$env:OMNISCI_WSL_CWD = "/mnt/d/research/OmniScientist"
-```
+**WSL 的 bash 会被明确拒绝。** 它跑在另一个操作系统里：文件系统是 `/mnt/c/...`
+而不是 `C:\...`，宿主进程的环境变量一个都拿不到。命令看起来跑成功了，产物却落在
+Linux 那边，工作台一片空白 —— 这种错法比直接报错难查得多，所以宁可不跑。
+`cmd.exe` 同理不支持，模型写的是 POSIX 语法。
 
 Python 论文工具优先使用应用数据目录下的托管 `venv\Scripts\python.exe`；
-`OMNISCI_PYTHON` 可以覆盖它。凭据只从 `%USERPROFILE%\.omnisci\env` 读取，
-不会传给分析子进程。
+`OMNISCI_PYTHON` 可以覆盖它。注意 `python3` 在 Windows 上通常是微软商店的
+应用执行别名（2 字节的占位符，跑起来退出码 49），那个不是 python，程序会跳过它。
+
+tectonic 由依赖引导自动下载（x64 有官方构建；ARM64 上游没出包，需要自己装）。
+没有它的话研究能跑完，但只出 `.tex` 不出 PDF。
+
+凭据只从 `%USERPROFILE%\.omnisci\env` 读取，不会传给分析子进程。
 
 ## 直接验证
 

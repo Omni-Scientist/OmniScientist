@@ -1728,12 +1728,30 @@ textarea:focus-visible,
    左边一列通道、右边详情。原生 <dialog> 负责定位和焦点，这里只管长相，
    token 全部沿用上面那套。 */
 
+/* 没配 key 的时候这一行是全屏唯一的出路，必须一眼看见。原来只有一句橙色小字，
+   在侧栏最底下，第一次打开的人根本注意不到。 */
+.account-row.needs-setup {
+  border: 1px solid var(--danger-v2);
+  border-radius: 8px;
+  background: #fdf3f2;
+}
+
+.account-row.needs-setup:hover {
+  background: #fbe9e7;
+}
+
 .account-row.needs-setup .account-avatar {
-  background: var(--warning-v2);
+  background: var(--danger-v2);
+  color: #fff;
+}
+
+.account-row.needs-setup .account-copy strong,
+.account-row.needs-setup .account-copy small {
+  color: var(--danger-v2);
 }
 
 .account-row.needs-setup .account-copy small {
-  color: var(--warning-v2);
+  font-weight: 600;
 }
 
 /* 只在 [open] 上给 display，否则会盖掉浏览器对关闭态的 display:none，

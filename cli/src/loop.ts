@@ -72,6 +72,62 @@ export interface LoopResult {
   turns: number;
   stoppedBecause: string;
   usage: Usage;
+  /** 人按了停止（或者浏览器断开），不是模型自己说完了。 */
+  aborted?: boolean;
+}
+
+/** 停止时给没来得及执行的那些 tool_call 补的回执。 */
+export const STOPPED_TOOL_RESULT = "已停止：这一步没有执行。";
+
+/** 这一轮中途抛异常时，给剩下的 tool_call 补的回执。 */
+export const ABORTED_TOOL_RESULT = "这一轮中断了：这一步没有执行结果。";
+
+/**
+ * 把历史消息里"有 tool_calls 却缺回执"的洞补上，就地修改并返回补了几条。
+ *
+ * 写入侧的不变量现在由 run() 的 finally 保证，但**已经存在的会话可能已经坏了**：
+ * 真机上有一个跑了 303 次工具调用的会话，其中 1 个 call 没有回执，于是它每次
+ * 发消息都被判 400，整个会话永久卡死，换新版本也救不回来。
+ * 所以恢复会话时也过一遍这里，把旧伤补掉。
+ */
+export function repairToolCallGaps(messages: unknown[]): number {
+  const answered = new Set<string>();
+  for (const message of messages) {
+    const m = message as { role?: string; tool_call_id?: string };
+    if (m?.role === "tool" && m.tool_call_id) answered.add(m.tool_call_id);
+  }
+
+  let added = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { tool_calls?: Array<{ id?: string }> };
+    const calls = m?.tool_calls ?? [];
+    const missing = calls.filter((c) => c.id && !answered.has(c.id));
+    if (!missing.length) continue;
+    // 插在这条 assistant 已有的那串 tool 回执之后，读起来才是自然顺序。
+    let at = i + 1;
+    while (at < messages.length && (messages[at] as { role?: string })?.role === "tool") at++;
+    messages.splice(at, 0, ...missing.map((c) => ({
+      role: "tool", tool_call_id: c.id, content: ABORTED_TOOL_RESULT,
+    })));
+    added += missing.length;
+  }
+  return added;
+}
+
+/**
+ * 中止只在三个地方生效，都是"消息数组处于合法状态"的位置：
+ *
+ *   轮次之间          最干净，什么都不用补
+ *   模型流式返回途中  SDK 抛 abort，那一轮的 assistant 消息压根没入队
+ *   每个工具调用之前  已跑的留真回执，没跑的补一条 STOPPED_TOOL_RESULT
+ *
+ * 第三条是必须的：assistant 消息带着 tool_calls 入队之后，**每一个** call 都必须有
+ * 对应的 tool 消息，否则下一次请求会被 OpenAI 兼容接口判 400，用户"接着聊"就永远
+ * 卡住。这个坑本会话前面已经踩过一次（空 assistant 消息那次）。
+ */
+function isAbortError(error: unknown): boolean {
+  const name = (error as { name?: string } | null)?.name;
+  return name === "AbortError" || name === "APIUserAbortError";
 }
 
 export class AgentLoop {
@@ -86,18 +142,33 @@ export class AgentLoop {
   ) {}
 
   /** 就地修改 messages（追加 assistant / tool 消息）。 */
-  async run(messages: unknown[], maxTurns = MAX_TURNS): Promise<LoopResult> {
+  async run(messages: unknown[], maxTurns = MAX_TURNS, signal?: AbortSignal): Promise<LoopResult> {
     const schemas = this.registry.schemas();
     const total = emptyUsage();
+    const halted = (turn: number): LoopResult => ({
+      turns: turn, stoppedBecause: "已停止", usage: total, aborted: true,
+    });
     // 不再往 MAX_TURNS 上夹：夹了的话 maxTurns 这个参数就是一句空话，
     // 调用方永远抬不高，无人值守跑论文必然半路被砍。
     const turnLimit = Math.max(1, Math.floor(maxTurns) || 1);
 
     for (let turn = 0; turn < turnLimit; turn++) {
+      if (signal?.aborted) return halted(turn);
       this.presenter.turnStart();
-      const result = await this.model.streamTurn(messages, schemas, (chunk) => {
-        this.presenter.textDelta(chunk);
-      });
+
+      let result: Awaited<ReturnType<ModelClient["streamTurn"]>>;
+      try {
+        result = await this.model.streamTurn(messages, schemas, (chunk) => {
+          this.presenter.textDelta(chunk);
+        }, signal);
+      } catch (error) {
+        // 被掐断的请求不是故障，也没有半条消息留在数组里，直接干净收工。
+        if (signal?.aborted || isAbortError(error)) return halted(turn);
+        throw error;
+      }
+      // SDK 被 abort 时不保证抛异常：实测有时只是把流悄悄结束掉，于是这一轮
+      // 看起来像正常收尾，界面就写成"研究运行完成"。只认信号，不猜 SDK 的行为。
+      if (signal?.aborted) return halted(turn);
 
       total.promptTokens += result.usage.promptTokens;
       total.completionTokens += result.usage.completionTokens;
@@ -139,15 +210,42 @@ export class AgentLoop {
 
       const toolMessages: unknown[] = [];
       const followupMessages: unknown[] = [];
-      for (const call of calls) {
-        const executed = await this.runOne(call);
-        toolMessages.push(executed.message);
-        followupMessages.push(...executed.followupMessages);
+      const answered = new Set<string>();
+      let stoppedHere = false;
+      try {
+        for (const call of calls) {
+          if (stoppedHere || signal?.aborted) {
+            stoppedHere = true;
+            continue;                       // 回执统一在 finally 里补
+          }
+          const executed = await this.runOne(call);
+          toolMessages.push(executed.message);
+          followupMessages.push(...executed.followupMessages);
+          answered.add(call.id);
+        }
+      } finally {
+        // **所有退出路径都要走到这里**：正常跑完、被停止、或者中间抛了异常
+        // （钩子、拦截表、审批门都可能抛，runOne 只兜住了 JSON 和工具自身的错）。
+        //
+        // assistant 消息带着 tool_calls 已经入队了，只要有一个 call 没有对应的
+        // tool 消息，下一次请求就会被判：
+        //   400 An assistant message with 'tool_calls' must be followed by tool
+        //       messages responding to each 'tool_call_id'.
+        // 那会让整个会话再也发不出消息。真机上已经踩过一次。
+        for (const call of calls) {
+          if (answered.has(call.id)) continue;
+          toolMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: stoppedHere || signal?.aborted ? STOPPED_TOOL_RESULT : ABORTED_TOOL_RESULT,
+          });
+        }
+        for (const message of [...toolMessages, ...followupMessages]) {
+          messages.push(message);
+          this.onMessage(message);
+        }
       }
-      for (const message of [...toolMessages, ...followupMessages]) {
-        messages.push(message);
-        this.onMessage(message);
-      }
+      if (stoppedHere) return halted(turn + 1);
     }
 
     // 数的是模型轮次，不是工具调用次数。之前那句写成"工具调用上限"，

@@ -18,9 +18,9 @@
  * 真要挡后者得上 OS 沙箱，那条路 GUARD.md 里已经明确不走。
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { basename, isAbsolute, resolve as resolvePath, sep } from "node:path";
+import { basename, dirname, isAbsolute, resolve as resolvePath, sep } from "node:path";
 
 export type Verdict = "allow" | "ask" | "deny";
 
@@ -292,20 +292,96 @@ export function tokenize(unit: string): string[] {
 }
 
 /** 命令前面这些前缀不改变「真正跑的是什么」，判的时候要跳过去。 */
-const PREFIX = /^(?:sudo|command|nohup|time|exec|env|xargs|nice|ionice|stdbuf|setsid)$/;
+const PREFIX = /^(?:sudo|command|nohup|time|timeout|exec|env|xargs|nice|ionice|stdbuf|setsid)$/;
+
+/**
+ * 包装器里「值单独占一个 token」的短选项。
+ *
+ * 为什么必须按程序分别列：光靠「以 - 开头就跳过」会把选项的**取值**留下来，
+ * 而取值长得跟程序名一模一样。`env -u FOO bash -c "rm -rf /"` 里跳掉 `-u`
+ * 之后第一个裸 token 是 `FOO`，于是 commandName 返回 FOO、innerCommand 不认它是
+ * 包装器，内层那条 rm 一次都没被检查过 —— 实测放行。`sudo -u nobody bash -lc`、
+ * `nice -n 10 bash -c` 同理。而简单形式（`bash -c`、`sudo rm -rf /`）一直是拦住的，
+ * 所以这个洞只在「带选项的包装」这一种写法下张开。
+ *
+ * 不求列全所有选项，只需要列全「会吃掉后面一个 token」的那些。
+ */
+const WRAPPER_VALUE_FLAGS: Record<string, Set<string>> = {
+  sudo: new Set(["-u", "-U", "-g", "-p", "-C", "-h", "-r", "-t", "-T", "-D", "-R"]),
+  env: new Set(["-u", "-C", "-S"]),
+  nice: new Set(["-n"]),
+  ionice: new Set(["-c", "-n", "-p", "-P", "-u"]),
+  stdbuf: new Set(["-i", "-o", "-e"]),
+  xargs: new Set(["-I", "-i", "-n", "-P", "-d", "-a", "-E", "-e", "-s", "-L", "-l"]),
+  timeout: new Set(["-s", "-k"]),
+  time: new Set(["-f", "-o"]),
+  exec: new Set(["-a"]),
+};
+
+/** 除了选项，还要吃掉几个位置参数。`timeout 5 bash -c ...` 里的 5。 */
+const WRAPPER_POSITIONALS: Record<string, number> = { timeout: 1 };
+
+/**
+ * 把 sudo / env -u FOO / nice -n 10 / timeout 5 这一串包装剥掉，
+ * 返回从「真正要跑的那个程序」开始的 token。
+ */
+function stripWrapperPrefix(tokens: string[]): string[] {
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/;
+  let i = 0;
+  outer: while (i < tokens.length) {
+    const raw = tokens[i]!;
+    if (!raw) { i++; continue; }
+    if (assignment.test(raw)) { i++; continue; } // FOO=1 cmd
+    if (!PREFIX.test(basename(raw))) break;
+
+    const name = basename(raw);
+    const valueFlags = WRAPPER_VALUE_FLAGS[name] ?? new Set<string>();
+    let positionals = WRAPPER_POSITIONALS[name] ?? 0;
+    i++;
+    while (i < tokens.length) {
+      const tok = tokens[i]!;
+      if (tok === "--") { i++; continue outer; } // 选项到此为止，后面就是命令
+      if (tok.startsWith("-") && tok !== "-") {
+        i++;
+        // `-u FOO`：取值单独一个 token，必须一起跳掉。
+        // 捆绑写法（`-oL`、`-I{}`、nice 的 `-10`）取值就在同一个 token 里，不用再吃。
+        if (valueFlags.has(tok) && i < tokens.length) i++;
+        continue;
+      }
+      if (assignment.test(tok)) { i++; continue; } // env FOO=1 cmd
+      if (positionals > 0) { positionals--; i++; continue; }
+      continue outer; // 落到真正的程序名（或者下一层包装）
+    }
+    break;
+  }
+  return tokens.slice(i);
+}
 
 /** 一条命令真正执行的那个程序名，剥掉 sudo / env FOO=1 / 绝对路径。 */
 export function commandName(unit: string): string {
-  const tokens = tokenize(unit);
-  for (const raw of tokens) {
+  for (const raw of stripWrapperPrefix(tokenize(unit))) {
     if (!raw) continue;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(raw)) continue; // FOO=1 cmd
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(raw)) continue;
     if (raw.startsWith("-")) continue;
-    const name = basename(raw);
-    if (PREFIX.test(name)) continue;
-    return name;
+    return basename(raw);
   }
   return "";
+}
+
+/**
+ * 剥掉包装之后的那条命令，给规则表再判一遍用。
+ *
+ * 规则表的命令位置匹配锚在行首或者 shell 操作符之后，`env -u FOO rm -rf /`
+ * 里的 rm 两个都不沾（`env` 和 `-u FOO` 都不在它认识的包装列表里），于是漏掉。
+ * 剥完是 `rm -rf /`，锚在行首，正常命中。
+ *
+ * 只加一次判定、不减任何判定，所以只会更严，不会把原来拦住的放过去。
+ */
+function dewrap(unit: string): string | null {
+  const tokens = tokenize(unit);
+  const stripped = stripWrapperPrefix(tokens);
+  if (stripped.length === tokens.length) return null; // 压根没有包装
+  return stripped.join(" ");
 }
 
 /** 命令位置的匹配前缀：行首、或者任何一个 shell 操作符之后，允许 sudo / 绝对路径。 */
@@ -400,6 +476,22 @@ function underOrEqual(child: string, parent: string): boolean {
 }
 
 /**
+ * 配置里那几个固定路径（受保护路径、工作区外可写）的 realpath，缓存一份。
+ *
+ * 它们每条命令都要比一遍，而 realPath 会一路 existsSync 上溯，不缓存的话
+ * 一条 `cat a b c` 就是几十次系统调用。这些是配置项不是模型给的路径，
+ * 一个进程内不会变。
+ */
+const realPathCache = new Map<string, string>();
+function realPathCached(p: string): string {
+  const hit = realPathCache.get(p);
+  if (hit !== undefined) return hit;
+  const real = realPath(p);
+  realPathCache.set(p, real);
+  return real;
+}
+
+/**
  * 这个路径是不是受保护的。
  * 相对形式（`.git`）按工作区内任意一层匹配，绝对形式（`~/.ssh`）按前缀匹配。
  */
@@ -407,7 +499,7 @@ export function protectedHit(abs: string, root: string, protectedPaths: string[]
   for (const raw of protectedPaths) {
     const p = expandHome(raw);
     if (isAbsolute(p)) {
-      if (underOrEqual(abs, resolvePath(p))) return raw;
+      if (underOrEqual(abs, realPathCached(resolvePath(p)))) return raw;
       continue;
     }
     // 相对项：路径里任意一段等于它就算命中，比如 <root>/sub/.git/config
@@ -423,8 +515,32 @@ function atOrAboveHome(abs: string): boolean {
   return abs === home || underOrEqual(home, abs);
 }
 
+/**
+ * 解析到**真实**路径。
+ *
+ * 只做词法解析（path.resolve）挡不住符号链接：工作区里一个 `link -> /tmp/out`，
+ * `printf x > link/escaped.txt` 词法上还在工作区内，实际写到了工作区外，
+ * write-outside-workspace 这条硬拦截当场失效。而且不需要谁来构造：
+ * git 能携带符号链接，node_modules 里更是遍地都是，模型自己 `ln -s` 也不受拦。
+ *
+ * tools/index.ts 的 ctx.resolve 早就是这么做的，shell 这条路一直没跟上，
+ * 于是同一个边界在文件工具那儿成立、在 bash 这儿不成立。
+ *
+ * 目标可能还不存在（`> 新文件`），所以 realpath 它最近的已存在祖先，
+ * 再把剩下那截拼回去。
+ */
+function realPath(p: string): string {
+  let probe = p;
+  while (!existsSync(probe) && probe !== dirname(probe)) probe = dirname(probe);
+  try {
+    return realpathSync(probe) + p.slice(probe.length);
+  } catch {
+    return p; // 读不到（权限、竞态）就退回词法结果，至少不比以前差
+  }
+}
+
 function resolveAgainst(root: string, p: string): string {
-  return isAbsolute(p) ? resolvePath(p) : resolvePath(root, p);
+  return realPath(isAbsolute(p) ? resolvePath(p) : resolvePath(root, p));
 }
 
 // ---------------------------------------------------------------------------
@@ -438,13 +554,17 @@ export interface GuardContext {
 
 /** 只跑规则表，不做路径分析。远端命令（ssh 里那截）只能用这个。 */
 export function checkRules(unit: string, config: GuardConfig): GuardDecision {
+  // 原样判一遍，再拿剥掉包装的形态判一遍。后者是为了 `env -u FOO rm -rf /`
+  // 这种：rm 既不在行首也不在操作符后面，命令位置匹配够不着它。
+  const forms = [unit, dewrap(unit)].filter((f): f is string => Boolean(f));
   // deny 优先于 ask，所以先把 deny 扫完再扫 ask
   for (const pass of ["deny", "ask"] as const) {
     for (const r of config.rules) {
       if (r.verdict !== pass) continue;
-      const hit =
-        (r.command && commandPosRegex(r.command).test(unit)) ||
-        (r.contains && new RegExp(r.contains, "i").test(unit));
+      const hit = forms.some((form) =>
+        (r.command && commandPosRegex(r.command).test(form)) ||
+        (r.contains && new RegExp(r.contains, "i").test(form)),
+      );
       if (hit) return { verdict: r.verdict, reason: r.reason, rule: r.id };
     }
   }
@@ -461,10 +581,16 @@ const REMOTE_WRAPPER = new Set(["ssh", "srun"]);
 
 /** 抠出被包在里面的那条命令。抠不出来返回空串。 */
 export function innerCommand(unit: string): { inner: string; remote: boolean } | null {
-  const tokens = tokenize(unit);
-  const name = commandName(unit);
-  const start = tokens.findIndex((t) => basename(t) === name);
-  const rest = tokens.slice(start + 1);
+  // 直接从剥掉包装的 token 上取，不要拿 commandName 的结果回去 findIndex：
+  // 程序名可能跟前面某个选项的取值撞名（`sudo -u bash bash -c …`），
+  // findIndex 会定位到那个取值上，rest 整个错位。
+  const stripped = stripWrapperPrefix(tokenize(unit));
+  const start = stripped.findIndex(
+    (t) => t && !t.startsWith("-") && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(t),
+  );
+  if (start < 0) return null;
+  const name = basename(stripped[start]!);
+  const rest = stripped.slice(start + 1);
 
   if (LOCAL_WRAPPER.has(name)) {
     const ci = rest.findIndex((t) => t === "-c" || t === "-lc" || t === "-cl");
@@ -489,7 +615,11 @@ export function innerCommand(unit: string): { inner: string; remote: boolean } |
 
 /** 判一条不可再拆的命令。 */
 export function checkUnit(unit: string, ctx: GuardContext): GuardDecision {
-  const { root, config } = ctx;
+  const { config } = ctx;
+  // 待判路径已经 realpath 过了，比较的另一侧也必须 realpath，不然两边对不上。
+  // macOS 上 /tmp 是指向 /private/tmp 的符号链接，只 realpath 一侧的话
+  // 「工作区外可写」白名单里的 /tmp 会永远命不中，模型连临时文件都写不了。
+  const root = realPath(ctx.root);
 
   // 0. 外层是 bash -c / ssh 这类包装，先判内层。
   //    本地包装（bash -c）内层跟直接跑没区别，规则和路径全查；
@@ -539,7 +669,9 @@ export function checkUnit(unit: string, ctx: GuardContext): GuardDecision {
     }
 
     const outside = !underOrEqual(abs, root);
-    const allowedOutside = config.writableOutside.some((w) => underOrEqual(abs, resolvePath(expandHome(w))));
+    const allowedOutside = config.writableOutside.some(
+      (w) => underOrEqual(abs, realPathCached(resolvePath(expandHome(w)))),
+    );
     if (outside && !allowedOutside) {
       return {
         verdict: "deny",
@@ -641,7 +773,9 @@ export function commandClasses(command: string): string[] {
  * 这里补的是工作区**内部**的受保护路径（`.git`、`.omnisci`）。
  */
 export function checkPath(abs: string, ctx: GuardContext, write: boolean): GuardDecision {
-  const prot = protectedHit(abs, ctx.root, ctx.config.protectedPaths);
+  // abs 已经 realpath 过（resolveAgainst），root 也得 realpath，不然
+  // 「工作区内任意一层的 .git」这条相对匹配在带符号链接的路径上永远对不上。
+  const prot = protectedHit(realPath(abs), realPath(ctx.root), ctx.config.protectedPaths);
   if (!prot) return ALLOW;
   if (write) {
     return {
