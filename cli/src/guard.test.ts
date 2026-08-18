@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { ApprovalPolicy } from "./approval.ts";
@@ -273,9 +273,16 @@ describe("路径", () => {
   });
 
   test("受保护路径经符号链接也算命中", () => {
-    // root/creds -> ~/.ssh：词法上是工作区内的普通目录，realpath 之后才看得出来
-    symlinkSync(join(homedir(), ".ssh"), join(root, "creds"));
-    expect(checkCommand("cp x creds/authorized_keys", ctx).verdict).toBe("deny");
+    // root/creds -> root/repo/.git：词法上 creds/ 是工作区内一个普通目录名，
+    // realpath 之后才看得出来它落在 .git 里。
+    //
+    // 不拿 ~/.ssh 当靶子：那要求跑测试的机器上真的有 ~/.ssh。CI runner 上没有，
+    // 于是 existsSync 一路上溯到 root，realpath 退化成词法路径，测试当场变绿——
+    // 绿得毫无意义。靶子必须由测试自己造出来。
+    const realGit = join(root, "repo", ".git");
+    mkdirSync(realGit, { recursive: true });
+    symlinkSync(realGit, join(root, "creds"));
+    expect(checkCommand("cp x creds/config", ctx).verdict).toBe("deny");
   });
 
   test("chmod -R 打到家目录以上拒", () => {
