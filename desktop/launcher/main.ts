@@ -18,7 +18,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 
 import { ASSETS, SKILL_FILES } from "./assets.generated.ts";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const HOST = "127.0.0.1";
 const TECTONIC_VERSION = "0.17.0";
 
