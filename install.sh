@@ -34,7 +34,7 @@ os=$(uname -s)
 case "$os" in
   Linux)  os=linux ;;
   Darwin) os=darwin ;;
-  *) die "这个安装脚本只支持 Linux 和 macOS，你的系统是 $os。Windows 请用 install.ps1" ;;
+  *) die "这个安装脚本只支持 Linux 和 macOS，你的系统是 ${os}。Windows 请用 install.ps1" ;;
 esac
 
 arch=$(uname -m)
@@ -58,9 +58,12 @@ say "下载 $asset ..."
 fetch "$base/$asset" "$tmp/omnisci" \
   || die "下载失败。确认 $REPO 有已发布的 release，或用 VERSION=vX.Y.Z 指定一个版本"
 
-# 校验和是可选的：release 里有就核，没有也不拦着装，但要说清楚跳过了
-if fetch "$base/$asset.sha256" "$tmp/omnisci.sha256" 2>/dev/null; then
-  want=$(awk '{print $1}' "$tmp/omnisci.sha256")
+# 校验和是可选的：release 里有就核，没有也不拦着装，但要说清楚跳过了。
+# 全部产物的校验和都在同一个 SHA256SUMS 里（以前是每个产物旁边挂一个 .sha256，
+# release 列表被撑成两倍长）。第二列可能带 * 前缀，那是 sha256sum 的二进制模式。
+if fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null; then
+  want=$(awk -v want="$asset" '{ name = $2; sub(/^\*/, "", name); if (name == want) { print $1; exit } }' \
+           "$tmp/SHA256SUMS")
   if command -v sha256sum >/dev/null 2>&1; then
     got=$(sha256sum "$tmp/omnisci" | awk '{print $1}')
   elif command -v shasum >/dev/null 2>&1; then
@@ -68,10 +71,17 @@ if fetch "$base/$asset.sha256" "$tmp/omnisci.sha256" 2>/dev/null; then
   else
     got=""
   fi
-  if [ -n "$got" ] && [ "$got" != "$want" ]; then
+  if [ -z "$want" ]; then
+    # 必须写成 ${asset}：紧跟着的全角逗号是多字节，bash 3.2（macOS 自带那个）会把它
+    # 当成变量名的一部分，set -u 下直接崩成 "unbound variable"。
+    say "SHA256SUMS 里没有 ${asset}，跳过校验"
+  elif [ -z "$got" ]; then
+    say "本机没有 sha256 工具，跳过校验"
+  elif [ "$got" != "$want" ]; then
     die "校验和不匹配，下载的文件不对，已中止"
+  else
+    say "校验和通过"
   fi
-  [ -n "$got" ] && say "校验和通过" || say "本机没有 sha256 工具，跳过校验"
 else
   say "这个 release 没带校验和，跳过校验"
 fi

@@ -918,7 +918,7 @@ async function handleCommand(
       out(`  ${YELLOW}有新版本 ${info.latest}${RESET}，当前 ${info.current}\n`);
       out(`  ${info.url}\n`);
       out(`  ${DIM}更新命令：${updateCommand("cli")}${RESET}\n`);
-      if (info.asset?.sha256Url) out(`  ${DIM}校验和：${info.asset.sha256Url}${RESET}\n`);
+      if (info.asset?.sumsUrl) out(`  ${DIM}校验和：${info.asset.sumsUrl}${RESET}\n`);
     }
     out(`  ${DIM}关掉每日检查：在 ~/.omnisci/env 里写 OMNISCI_UPDATE_CHECK=off${RESET}\n`);
     return false;

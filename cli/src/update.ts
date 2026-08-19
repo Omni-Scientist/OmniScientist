@@ -31,8 +31,8 @@ export interface UpdateInfo {
   newer: boolean;
   /** release 页面，提示里给用户点的就是它。 */
   url: string;
-  /** 这个平台对应的产物和它的校验和链接，没有匹配的就是 undefined。 */
-  asset?: { name: string; url: string; sha256Url?: string };
+  /** 这个平台对应的产物，没有匹配的就是 undefined。sumsUrl 是整个 release 共用的 SHA256SUMS。 */
+  asset?: { name: string; url: string; sumsUrl?: string };
 }
 
 interface State {
@@ -163,7 +163,8 @@ export async function checkForUpdate(
   const wanted = assetPatternFor(process.platform, process.arch, kind);
   const assets = release.assets ?? [];
   const hit = assets.find((a) => a.name && wanted.test(a.name));
-  const sha = hit?.name ? assets.find((a) => a.name === `${hit.name}.sha256`) : undefined;
+  // 校验和只有一个文件：以前每个产物旁边挂一个同名 .sha256，release 列表被撑成两倍长。
+  const sums = assets.find((a) => a.name === "SHA256SUMS");
 
   return {
     latest,
@@ -171,7 +172,7 @@ export async function checkForUpdate(
     newer: true,
     url: release.html_url || `https://github.com/${REPO}/releases/latest`,
     asset: hit?.browser_download_url && hit.name
-      ? { name: hit.name, url: hit.browser_download_url, sha256Url: sha?.browser_download_url }
+      ? { name: hit.name, url: hit.browser_download_url, sumsUrl: sums?.browser_download_url }
       : undefined,
   };
 }

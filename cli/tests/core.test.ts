@@ -767,8 +767,8 @@ describe("版本检查", () => {
     expect(hit("linux", "arm64", "desktop", "OmniScientist-linux-x86_64.tar.gz")).toBe(false);
   });
 
-  test("挑中哪个资产，校验和就跟着哪个", async () => {
-    // 这个名字照着 release.yml 写死，只为验证 .sha256 跟的是被挑中的那个。
+  test("挑中平台对应的资产，校验和指向那一个 SHA256SUMS", async () => {
+    // 这个名字照着 release.yml 写死，只为验证挑中的是本机那个包。
     const cpu = process.arch === "arm64" ? "arm64" : "x86_64";
     const mine = process.platform === "win32"
       ? "OmniScientist-0.1.0-windows-x64.zip"
@@ -785,7 +785,7 @@ describe("版本检查", () => {
       html_url: "https://example.invalid/rel",
       assets: [
         { name: "omnisci-linux-x86_64", browser_download_url: "https://example.invalid/other" },
-        { name: `${mine}.sha256`, browser_download_url: "https://example.invalid/pkg.sha256" },
+        { name: "SHA256SUMS", browser_download_url: "https://example.invalid/SHA256SUMS" },
         { name: mine, browser_download_url: "https://example.invalid/pkg" },
       ],
     }), { status: 200 })) as unknown as typeof fetch;
@@ -793,7 +793,7 @@ describe("版本检查", () => {
       const info = await checkForUpdate("0.0.1", "desktop", { force: true });
       expect(info?.asset?.name).toBe(mine);
       expect(info?.asset?.url).toBe("https://example.invalid/pkg");
-      expect(info?.asset?.sha256Url).toBe("https://example.invalid/pkg.sha256");
+      expect(info?.asset?.sumsUrl).toBe("https://example.invalid/SHA256SUMS");
     } finally {
       globalThis.fetch = realFetch;
       if (before) writeFileSync(stateFile, before);

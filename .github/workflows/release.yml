@@ -186,9 +186,16 @@ jobs:
         with: { path: staging }
       - name: 汇总并列出实际拿到的产物
         run: |
+          # 校验和只发 SHA256SUMS 一个文件。以前每个产物旁边还挂一份同名 .sha256，
+          # release 页上 10 个包变成 20 项，一半是噪音。所以 .sha256 压根不进 release/，
+          # 只把内容合进 SHA256SUMS。
+          #
+          # sed 抹掉 Windows runner 写出来的 * 前缀（sha256sum 的二进制模式），让整份文件
+          # 一个格式：sha256sum -c 两种都认，但 install.sh / install.ps1 是按文件名找行的。
           mkdir -p release
-          find staging -type f -exec cp {} release/ \;
-          ( cd release && cat *.sha256 > SHA256SUMS 2>/dev/null || true )
+          find staging -type f ! -name '*.sha256' -exec cp {} release/ \;
+          find staging -type f -name '*.sha256' -exec cat {} + \
+            | sed 's/ \*/  /' | sort -k2 > release/SHA256SUMS
           echo "### 本次实际产出" >> "$GITHUB_STEP_SUMMARY"
           ls -lh release | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -221,6 +228,24 @@ jobs:
             [ -f "release/$asset" ] || echo "::warning::$asset 这次没出来（Linux ARM 允许缺席）"
           done
           exit $missing
+
+      # Windows 桌面包是 desktop-windows.yml 单独挂上去的，这个 job 的 staging 里没有它，
+      # 所以它的校验和进不了上面那份 SHA256SUMS。那条工作流一分钟就编完，跑到这一步通常
+      # 已经挂好了；真没赶上就少一行，只提醒，不拦着发。
+      - name: 把 Windows 桌面包的校验和并进来
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.value) }}"
+          if gh release download "$tag" --pattern 'OmniScientist-*-windows-x64.zip' --dir win 2>/dev/null; then
+            ( cd win && sha256sum -- *.zip >> ../release/SHA256SUMS )
+            sort -k2 -o release/SHA256SUMS release/SHA256SUMS
+            rm -rf win
+            echo "Windows 包的校验和已并入 SHA256SUMS"
+          else
+            echo "::warning::Windows 桌面包还没挂上来，SHA256SUMS 里不含它"
+          fi
+
       - uses: softprops/action-gh-release@v2
         with:
           name: OmniScientist ${{ needs.version.outputs.value }}

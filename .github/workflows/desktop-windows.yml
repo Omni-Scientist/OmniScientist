@@ -154,7 +154,9 @@ jobs:
             gh release create $tag --draft --title "OmniScientist $($tag -replace '^v', '')" --notes ""
             if ($LASTEXITCODE -ne 0) { throw "建 release $tag 失败" }
           }
-          $files = Get-ChildItem desktop\packaging\windows\dist\*.zip, desktop\packaging\windows\dist\*.sha256 |
+          # 只挂 zip。校验和不再一个产物一个文件（release 列表会翻倍），统一进 release.yml
+          # 那份 SHA256SUMS，它发布前会把这个包下回去补上一行。
+          $files = Get-ChildItem desktop\packaging\windows\dist\*.zip |
                    ForEach-Object { $_.FullName }
           if (-not $files) { throw "没有可上传的产物" }
           gh release upload $tag $files --clobber

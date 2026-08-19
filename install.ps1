@@ -43,16 +43,32 @@ try {
   $exe = Join-Path $tmp 'omnisci.exe'
   Invoke-WebRequest -Uri "$base/$asset" -OutFile $exe -UseBasicParsing
 
-  # 校验和可选：release 里有就核
-  $sumFile = Join-Path $tmp 'omnisci.sha256'
+  # 校验和可选：release 里有 SHA256SUMS 就核。所有产物的校验和都在这一个文件里，
+  # 以前是每个产物旁边挂一个 .sha256，release 列表被撑成两倍长。
+  #
+  # 下载和核对分成两段：以前合在一个 try 里，而 404 在 5.1 抛 WebException、在 7 抛
+  # HttpResponseException，只 catch 前者的话 PS7 上少个校验和文件会直接把安装打断。
+  $sumFile = Join-Path $tmp 'SHA256SUMS'
+  $haveSums = $true
   try {
-    Invoke-WebRequest -Uri "$base/$asset.sha256" -OutFile $sumFile -UseBasicParsing
-    $want = (Get-Content $sumFile -Raw).Split()[0].Trim()
-    $got  = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
-    if ($want -and $got -ne $want.ToLower()) { throw '校验和不匹配，下载的文件不对' }
-    Write-Host '校验和通过'
-  } catch [System.Net.WebException] {
+    Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sumFile -UseBasicParsing
+  } catch {
+    $haveSums = $false
     Write-Host '这个 release 没带校验和，跳过校验'
+  }
+  if ($haveSums) {
+    # 第二列可能带 * 前缀，那是 sha256sum 的二进制模式写出来的。
+    $want = Get-Content $sumFile | ForEach-Object {
+      $parts = $_ -split '\s+', 2
+      if ($parts.Count -eq 2 -and $parts[1].Trim().TrimStart('*') -eq $asset) { $parts[0] }
+    } | Select-Object -First 1
+    if (-not $want) {
+      Write-Host "SHA256SUMS 里没有 ${asset}，跳过校验"
+    } else {
+      $got = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+      if ($got -ne $want.ToLower()) { throw '校验和不匹配，下载的文件不对' }
+      Write-Host '校验和通过'
+    }
   }
 
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
