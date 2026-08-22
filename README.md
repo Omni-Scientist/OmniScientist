@@ -30,13 +30,21 @@
 
 </div>
 
+<img src="assets/shot-paper.jpg" width="100%" alt="The compiled paper in the research log, each highlighted number linked to the run that produced it">
+
+The compiled paper beside the experiment trace, every highlighted number resolving to the run that produced it.
+
+<img src="assets/shot-mol.jpg" width="100%" alt="A ball-and-stick conformer computed from the chemistry case's SMILES, in the research log">
+
+A ball-and-stick conformer computed from the chemistry case's own SMILES, arriving in the research log mid-run.
+
+<img src="assets/shot-ct.jpg" width="100%" alt="A 64-cubed CT volume read as a point cloud, in the research log">
+
+A 64³ CT volume read as a point cloud, beside the tool calls that produced it.
+
 Point OmniScientist at a folder of data and a research direction. It looks at the raw material itself, forms a hypothesis, writes and runs its own analysis code, reads the figures that come back, and drafts a paper whose every number traces to a real execution record. A run ends at a compiled PDF with figures, tables and references that resolve to real DOIs.
 
 Images, waveforms, audio, video, point clouds, trajectories, tables and formulas all go in as they are.
-
-<img src="assets/workbench.png" width="100%" alt="The OmniScientist desktop workspace, transcript on the left and research log on the right">
-
-The desktop edition, mid-run. The transcript is on the left. Every figure, script and the compiled paper land in the research log on the right as they are produced.
 
 ## Install
 
@@ -64,11 +72,9 @@ The terminal agent also installs in one line. Use `curl -fsSL https://raw.github
 
 Each stage streams into the transcript, and every artifact lands in the research log the moment it exists. That covers the matplotlib output, the script that drew it, the data table behind it, and at the end the compiled paper.
 
-The workspace is a local web app. The address bar in the screenshot above reads `127.0.0.1` because that is the entire deployment. The layout collapses to one column on a phone, and closing the tab stops the run.
+The workspace is a local web app. The address bar in the screenshots above reads `127.0.0.1` because that is the entire deployment. The layout collapses to one column on a phone, and closing the tab stops the run.
 
 ## Provenance
-
-<img src="assets/ui-paper-traced.png" width="100%" alt="The paper view, with numbers in the draft highlighted and linked back to the run that produced them">
 
 Every number in the draft carries a link back to the run that produced it. A gate reads the execution record rather than the draft, and admits the draft once each of those numbers has appeared in some run's `stdout`. A null result routes back to re-ideation. Citations are resolved live against OpenAlex and Crossref, so each one carries a real DOI.
 
