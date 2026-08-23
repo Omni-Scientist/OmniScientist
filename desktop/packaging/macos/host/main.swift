@@ -173,23 +173,33 @@ func tailOfTodaysLog(lines: Int = 12) -> String {
 /// Drawn rather than shipped as an asset: the menu bar wants a template image
 /// that follows light and dark automatically, and a ring reads at 18 points
 /// where a scaled-down app icon turns to mud.
+/// 菜单栏图标：产品自己的标记，彩色。
+///
+/// 以前这里是代码里手画的一个圆环加圆点，跟品牌标记没有关系，用户在菜单栏
+/// 看到的是个通用符号。现在读打包时放进 Resources 的 StatusIcon.png，
+/// 改 logo 不用改代码。
+///
+/// isTemplate 必须是 false：模板模式会把整张图涂成单色，彩色旋涡就没了。
+/// 这个标记本身在深浅两种菜单栏底色上都清楚，不靠系统着色。
 func statusIcon(warning: Bool) -> NSImage {
-    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
-        NSColor.black.setStroke()
-        NSColor.black.setFill()
-        let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 2.5, dy: 2.5))
-        ring.lineWidth = 1.4
-        ring.stroke()
-        NSBezierPath(ovalIn: NSRect(x: rect.midX - 2.1, y: rect.midY - 2.1, width: 4.2, height: 4.2)).fill()
+    let side: CGFloat = 18
+    let base = Bundle.main.url(forResource: "StatusIcon", withExtension: "png")
+        .flatMap { NSImage(contentsOf: $0) }
+        ?? NSApp.applicationIconImage
+
+    let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+        base?.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
         if warning {
-            // A filled corner pip reads as a badge even in monochrome template mode.
-            let pip = NSRect(x: rect.maxX - 5.4, y: rect.maxY - 5.4, width: 5.0, height: 5.0)
-            NSColor.black.setFill()
+            // 右上角一个不透明角标，压在彩图上也读得出"有事要处理"
+            let pip = NSRect(x: rect.maxX - 6.0, y: rect.maxY - 6.0, width: 6.0, height: 6.0)
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: pip.insetBy(dx: -0.8, dy: -0.8)).fill()
+            NSColor.systemRed.setFill()
             NSBezierPath(ovalIn: pip).fill()
         }
         return true
     }
-    image.isTemplate = true
+    image.isTemplate = false
     return image
 }
 
@@ -393,6 +403,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+    }
+
+    /// 点 Dock 图标就打开工作台。
+    ///
+    /// 做过"切回已经打开的那个标签页"，但浏览器没有"这个 URL 已经开着了"的接口，
+    /// 只能用 AppleScript 去翻标签页，而那要请求控制浏览器的权限，
+    /// 会弹一个"OmniScientist 想要控制 Google Chrome"的系统弹窗。
+    /// 为这点便利换那个弹窗不划算，所以就是简单地开一页。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openWorkbench(nil)
+        return false
     }
 
     @objc private func openWorkbench(_ sender: Any?) {

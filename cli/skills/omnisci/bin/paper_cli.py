@@ -394,6 +394,53 @@ def _artifact(td, path):
             "size": os.path.getsize(path)}
 
 
+def _render_review_pages(pdf_path, review_dir, dpi=120):
+    """把编译好的 PDF 逐页渲成 PNG。交付前 agent 必须逐页看过自己写的论文，
+    delivery.ts 会检查 manifest 里有没有这些页、以及是不是真的被看过，
+    所以这一步失败等于交付失败，不能降级放行。
+
+    渲染器优先用 pypdfium2：纯 wheel，跟着 requirements 装进受管 venv，
+    macOS / Linux / Windows 都有预编译包，doctor 也就自动把它纳入体检。
+
+    以前这里只认 pdftoppm。那是 poppler 附带的外部可执行文件，既不在
+    requirements 里也不在 doctor 里，装没装全靠运气；更糟的是从 Finder
+    启动的应用 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，brew 装了也看不见。
+    结果就是论文编译成功、却卡在渲染审阅页，而且报错只说"缺 pdftoppm"。
+    pdftoppm 作为后备保留，谁的机器上有就用谁的。
+    """
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        pdfium = None
+
+    if pdfium is not None:
+        doc = pdfium.PdfDocument(pdf_path)
+        try:
+            width = max(2, len(str(len(doc))))
+            names = []
+            for index in range(len(doc)):
+                target = os.path.join(review_dir, "page-%0*d.png" % (width, index + 1))
+                doc[index].render(scale=dpi / 72.0).to_pil().save(target)
+                names.append(target)
+        finally:
+            doc.close()
+        return names
+
+    pdftoppm = shutil.which("pdftoppm")
+    if not pdftoppm:
+        raise RuntimeError(
+            "no PDF renderer available: pypdfium2 is not importable and pdftoppm is not on PATH. "
+            "Install the managed dependencies (pip install -r requirements.txt) and run this again."
+        )
+    preview = subprocess.run([pdftoppm, "-png", "-r", str(dpi), pdf_path,
+                              os.path.join(review_dir, "page")],
+                             capture_output=True, text=True, timeout=300)
+    if preview.returncode != 0:
+        raise RuntimeError((preview.stdout + preview.stderr)[-1500:])
+    return [os.path.join(review_dir, f) for f in sorted(os.listdir(review_dir))
+            if f.lower().endswith(".png")]
+
+
 def compile_paper(td, sections, title, authors="Anonymous", name="paper", tectonic_path=None,
                   command_runner=None, sections_path=None):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name or ""):
@@ -536,18 +583,13 @@ def compile_paper(td, sections, title, authors="Anonymous", name="paper", tecton
     shutil.copy(pdf, out_pdf)
     review_pages = []
     if not command_runner:
-        pdftoppm = shutil.which("pdftoppm")
-        if not pdftoppm:
-            return finish("error", error="pdftoppm is missing; the compiled PDF cannot be reviewed")
         os.makedirs(review_dir, exist_ok=True)
-        preview = subprocess.run([pdftoppm, "-png", "-r", "120", out_pdf,
-                                  os.path.join(review_dir, "page")],
-                                 capture_output=True, text=True, timeout=300)
-        review_pages = [os.path.join(review_dir, f) for f in sorted(os.listdir(review_dir))
-                        if f.lower().endswith(".png")]
-        if preview.returncode != 0 or not review_pages:
-            return finish("error", error="PDF page rendering failed: %s" %
-                          (preview.stdout + preview.stderr)[-1500:])
+        try:
+            review_pages = _render_review_pages(out_pdf, review_dir)
+        except Exception as exc:
+            return finish("error", error="PDF page rendering failed: %s" % exc)
+        if not review_pages:
+            return finish("error", error="PDF page rendering produced no pages")
     return finish("ok", review_pages=review_pages, pdf=out_pdf, tex=out_tex,
                   sections=[s for s in sections.get("_order", [])])
 

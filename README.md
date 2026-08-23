@@ -72,7 +72,7 @@ The terminal agent also installs in one line. Use `curl -fsSL https://raw.github
 
 Each stage streams into the transcript, and every artifact lands in the research log the moment it exists. That covers the matplotlib output, the script that drew it, the data table behind it, and at the end the compiled paper.
 
-The workspace is a local web app. The address bar in the screenshots above reads `127.0.0.1` because that is the entire deployment. The layout collapses to one column on a phone, and closing the tab stops the run.
+The workspace is a local web app. The address bar in the screenshots above reads `127.0.0.1` because that is the entire deployment. The layout collapses to one column on a phone. Closing the tab stops the run after a 30-second grace period, so a page refresh keeps it alive.
 
 ## Provenance
 
@@ -93,7 +93,7 @@ Two models do two jobs. The backbone reasons and writes. A perception sidecar re
 
 | Edition | Backbone | Perception sidecar |
 |---|---|---|
-| desktop, terminal | `deepseek-v4-flash`, or any OpenAI-compatible endpoint via `OMNISCI_BASE_URL` / `OMNISCI_API_KEY` / `OMNISCI_MODEL` | `claude-sonnet-5` by default, changed with `OMNISCI_VISION_PROVIDER` / `OMNISCI_VISION_MODEL` |
+| desktop, terminal | `deepseek-v4-flash`, or any OpenAI-compatible endpoint via `OMNISCI_BASE_URL` / `OMNISCI_API_KEY` / `OMNISCI_MODEL` | `claude-sonnet-5` by default, `deepseek-v4-flash-vision-exp` on the same DeepSeek key, changed with `OMNISCI_VISION_PROVIDER` / `OMNISCI_VISION_MODEL` |
 | engine | any, selected by `OMNIST_MODEL`, covering OpenAI, Anthropic, OpenRouter, a local vLLM or sglang server, or your own gateway | `OMNIST_PERCEIVER` |
 
 In the desktop edition both are set from the settings dialog, which saves a configuration once it has answered a live request. The transport follows from the model name, so you supply your own URL and key. The full table is in [`docs/USAGE.md`](docs/USAGE.md).

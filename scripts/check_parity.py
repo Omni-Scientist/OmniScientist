@@ -116,6 +116,54 @@ for rel in (CLI_SKILL + "/gate_cli.py", HOST_SKILL + "/gate_cli.py",
         "裸 relpath 会在符号链接工作区下算出绕行路径",
     )
 
+# ---------------------------------------------------------------- PowerShell 编码
+
+# 实测踩过：Windows PowerShell 5.1 读没有 BOM 的 UTF-8 文件时按系统 ANSI 代码页
+# 解码，脚本里的中文注释变成乱码，整个文件报 Unexpected token 跑不起来。
+# 也就是说 Windows 用户复制一键安装命令下去会直接失败，而我们在 mac 上完全看不见。
+def must_have_bom(rel, why):
+    """PowerShell 脚本必须带 UTF-8 BOM。"""
+    global checked
+    checked += 1
+    path = os.path.join(ROOT, rel)
+    if not os.path.exists(path):
+        problems.append("文件不存在：%s" % rel)
+        return
+    with open(path, "rb") as handle:
+        if not handle.read(3).startswith(b"\xef\xbb\xbf"):
+            problems.append("%s 没有 UTF-8 BOM\n      %s" % (rel, why))
+
+
+for _ps1 in ("install.ps1",
+             "desktop/packaging/windows/install.ps1",
+             "desktop/packaging/windows/build-windows.ps1",
+             "desktop/packaging/windows/uninstall.ps1"):
+    must_have_bom(_ps1, "Windows PowerShell 5.1 会把无 BOM 的 UTF-8 当 ANSI 读，中文注释变乱码后整个脚本解析失败")
+
+# ---------------------------------------------------------------- 审阅页渲染
+
+# 踩过：审阅页渲染硬依赖 poppler 的 pdftoppm，而它既不在 requirements 也不在
+# doctor 里，装没装全靠运气；GUI 启动的应用 PATH 又只有四个系统目录，brew 装了
+# 也看不见。结果是论文编译成功、卡在渲染审阅页，agent 反复要用户手敲 ln -s。
+must_contain(
+    CLI_SKILL + "/paper_cli.py", "_render_review_pages",
+    "审阅页渲染必须走受管依赖，不能直接调外部程序",
+)
+must_contain(
+    "cli/skills/omnisci/requirements.txt", "pypdfium2",
+    "渲染器要在依赖清单里，doctor 和 bootstrap 才认得它",
+)
+must_not_match(
+    CLI_SKILL + "/paper_cli.py", r'return finish\("error", error="pdftoppm is missing',
+    "缺 pdftoppm 不该直接判死，受管渲染器才是主路径",
+)
+
+# 两份 requirements 分叉了，docs/INSTALL.md 里"权威清单"那句话就成了假的。
+must_be_identical(
+    ["cli/skills/omnisci/requirements.txt", "skill/omnisci/requirements.txt"],
+    "两份依赖清单必须一致，文档把其中一份当权威清单在引用",
+)
+
 # ---------------------------------------------------------------- 两份 skill
 
 # 这几个文件今天逐字节一致，没有任何该分叉的理由。分叉了就是有人只改了一边。

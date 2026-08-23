@@ -18,7 +18,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 
 import { ASSETS, SKILL_FILES } from "./assets.generated.ts";
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 const HOST = "127.0.0.1";
 const TECTONIC_VERSION = "0.17.0";
 
@@ -326,8 +326,10 @@ async function probeVision(
     { type: "text", text: "What is the single dominant colour of this image? Answer with one word." },
     { type: "image_url", image_url: { url: `data:image/png;base64,${PROBE_PNG_B64}` } },
   ];
-  // 同样别抠：推理模型会先花掉一批 token 才开口。
-  const result = await postProbe(baseUrl, apiKey, model, content, 256, true);
+  // 同样别抠：推理模型会先花掉一批 token 才开口。deepseek-v4-flash-vision-exp
+  // 的 max_tokens 连推理链一起算，给 256 时推理话痨一点正文就被挤成空串，
+  // 实测同一请求 256 偶发失败、1024 稳定。
+  const result = await postProbe(baseUrl, apiKey, model, content, 1024, true);
   if (!result.ok) return result;
   const saw = (result.reply ?? "").trim().replace(/\s+/g, " ").slice(0, 60);
   if (!saw) return { ok: false, detail: `${model} 收下了图但没回任何文字，不能当视觉模型用` };

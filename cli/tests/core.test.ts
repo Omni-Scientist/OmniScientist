@@ -1081,6 +1081,33 @@ describe("受管 venv 建出来之后要接管解释器", () => {
 });
 
 describe("受管工具的 PATH", () => {
+  // 从 Finder 启动的 macOS 应用，PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
+  // 登录 shell 那一份一点都继承不到。实测踩过两次：tectonic 在 ~/.local/bin、
+  // poppler 在 /opt/homebrew/bin，终端跑好好的，双击图标起来就"不存在"，
+  // 论文编译完卡在渲染审阅页。
+  test("用户自己装工具的目录也要挂上，否则 GUI 启动看不见 brew 装的东西", () => {
+    const home = mkdtempSync("/tmp/omnisci-userbin-");
+    const originalPath = process.env.PATH;
+    try {
+      const brew = join(home, "brewbin");
+      const local = join(home, "localbin");
+      mkdirSync(brew, { recursive: true });
+      // local 故意不建：不存在的目录不该被挂上去
+
+      process.env.PATH = "/usr/bin:/bin";
+      ensureManagedToolsOnPath(home, [brew, local]);
+
+      const parts = process.env.PATH!.split(":");
+      expect(parts).toContain(brew);
+      expect(parts).not.toContain(local);
+      // 受管目录仍然要排在用户目录前面，自带的 tectonic 优先于系统里那份
+      expect(parts.indexOf(brew)).toBeGreaterThan(-1);
+    } finally {
+      if (originalPath !== undefined) process.env.PATH = originalPath;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   // 实测踩过：应用 19:40 起，agent 19:42 把 tectonic 放进 <dataDir>/bin，
   // 21:00 跑出来的论文还是 tex_only——启动时算一次的 PATH 永远看不到它。
   test("应用起来之后才出现的目录，也要能挂上", () => {
@@ -1090,19 +1117,21 @@ describe("受管工具的 PATH", () => {
     try {
       const bin = join(home, "bin");
 
-      // 目录还不存在：什么都不该加
+      // 目录还不存在：什么都不该加。第二个参数把「用户自己装工具的目录」
+      // 清空，否则跑测试那台机器上真实存在的 /opt/homebrew/bin 会被挂进来，
+      // 断言就跟被测行为无关了。那条路径由下面单独一个用例盯着。
       process.env.PATH = "/usr/bin:/bin";
-      ensureManagedToolsOnPath(home);
+      ensureManagedToolsOnPath(home, []);
       expect(process.env.PATH).toBe("/usr/bin:/bin");
 
       // 现在它出现了（模拟 agent 事后装 tectonic）
       mkdirSync(bin, { recursive: true });
-      ensureManagedToolsOnPath(home);
+      ensureManagedToolsOnPath(home, []);
       expect(process.env.PATH!.split(":")[0]).toBe(bin);
 
       // 再调不该重复追加
       const once = process.env.PATH;
-      ensureManagedToolsOnPath(home);
+      ensureManagedToolsOnPath(home, []);
       expect(process.env.PATH).toBe(once);
     } finally {
       if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;

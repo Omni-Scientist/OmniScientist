@@ -116,6 +116,10 @@ else
   "$HERE/make-icns.sh" "$APP/Contents/Resources"
 fi
 
+# 菜单栏用的是不带灰底的纯标记：18 点的地方摆一块圆角灰砖既拥挤又跟系统图标不搭。
+# Dock 用带底的那张（透明图标在 Dock 里像没做完），两处素材同源不同用。
+cp "$HERE/icon-glyph-1024.png" "$APP/Contents/Resources/StatusIcon.png"
+
 # ---------------------------------------------------------------------- signing
 # Apple Silicon refuses to execute an unsigned binary, so ad-hoc signing is not
 # optional. It is also unrelated to Gatekeeper: see the desktop service contract (5.0).

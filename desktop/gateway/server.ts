@@ -106,6 +106,8 @@ interface WebRuntime {
    * AgentLoop 只在"消息数组合法"的位置响应，所以停下来之后还能接着聊。
    */
   abort?: AbortController;
+  /** 浏览器断开后的宽限定时器。页面在宽限期内回来就取消，真走了才拨闸。 */
+  disconnectTimer?: ReturnType<typeof setTimeout>;
 }
 
 const runtimes = new Map<string, WebRuntime>();
@@ -830,6 +832,12 @@ export const apiFetch = async (request: Request): Promise<Response> => {
     const sessionMatch = /^\/api\/v1\/sessions\/([^/]+)$/.exec(url.pathname);
     if (request.method === "GET" && sessionMatch) {
       const id = decodeURIComponent(sessionMatch[1]!);
+      // 刷新后的页面一定会先来拉这个会话。人回来了，取消断线宽限的拨闸。
+      const reattached = runtimes.get(id);
+      if (reattached?.disconnectTimer) {
+        clearTimeout(reattached.disconnectTimer);
+        reattached.disconnectTimer = undefined;
+      }
       try {
         const runtime = runtimes.get(id) ?? await createRuntime(id);
         return json(chatOf(runtime));
@@ -894,6 +902,8 @@ export const apiFetch = async (request: Request): Promise<Response> => {
       // 只有界面真的选了目录才覆盖。续聊时前端不一定重发，
       // 无条件赋值会把已经记住的 case 目录抹掉，产物又找不到了。
       if (wantedData) runtime.dataPath = wantedData;
+      clearTimeout(runtime.disconnectTimer);
+      runtime.disconnectTimer = undefined;
       runtime.abort = new AbortController();
       runtime.active = true;
 
@@ -934,6 +944,8 @@ export const apiFetch = async (request: Request): Promise<Response> => {
               emit({ type: "run.failed", messageId, error: detail });
             })
             .finally(() => {
+              clearTimeout(runtime.disconnectTimer);
+              runtime.disconnectTimer = undefined;
               runtime.active = false;
               if (runtime.status === "running") {
                 runtime.status = "idle";
@@ -947,9 +959,15 @@ export const apiFetch = async (request: Request): Promise<Response> => {
         },
         cancel() {
           streamClosed = true;
-          // 以前这里只是停止推送事件，AgentLoop 在服务端继续跑到底：关掉标签页
-          // 之后模型照调、工具照跑、钱照烧，人完全看不见。拨闸才是真停。
-          runtime.abort?.abort();
+          // 两个坑都踩过才有这段。最早断开只停推送，AgentLoop 在服务端跑到底，
+          // 关掉标签页之后模型照调、钱照烧；改成立刻拨闸之后，一次无辜的刷新
+          // 又会把跑了半小时的运行当场打死。所以给 30 秒宽限：页面回来
+          //（重新拉会话）就取消，真没人回来才停。
+          clearTimeout(runtime.disconnectTimer);
+          runtime.disconnectTimer = setTimeout(() => {
+            runtime.disconnectTimer = undefined;
+            runtime.abort?.abort();
+          }, 30_000);
         },
       });
       return new Response(stream, {

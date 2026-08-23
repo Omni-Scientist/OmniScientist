@@ -30,9 +30,13 @@
     <string>public.app-category.productivity</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <!-- Menu-bar resident only: no Dock icon, absent from Cmd-Tab. See the desktop service contract (4.3). -->
+    <!-- Dock icon plus menu-bar item. Menu-bar-only (LSUIElement) shipped first, and
+         real users could not find the app at all: nothing in the Dock, nothing in
+         Cmd-Tab, and on notched MacBooks a crowded menu bar hides the status item
+         entirely. The Dock icon is the discoverable handle; clicking it opens the
+         workbench. -->
     <key>LSUIElement</key>
-    <true/>
+    <false/>
     <key>NSHumanReadableCopyright</key>
     <string>MIT licensed. See LICENSE in the source repository.</string>
 </dict>

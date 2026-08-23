@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Version = "0.1.0",
     [ValidateSet("bun-windows-x64", "bun-windows-arm64")]
@@ -77,11 +77,15 @@ try {
         "--windows-publisher=Omni-Scientist",
         "--windows-version=$WindowsVersion",
         "--windows-description=Browser-based multimodal research workspace",
+        # 不传这条的话 exe 用的是系统默认图标，任务栏、开始菜单、资源管理器里
+        # 全是一张白纸，跟 macOS 那边有 Dock 图标的观感差一大截。
+        "--windows-icon=$(Join-Path $PSScriptRoot 'OmniScientist.ico')",
         "--outfile", $Executable,
         "launcher/main.ts"
     )
     Invoke-Checked "bun" $BuildArguments $DesktopRoot
 
+    Copy-Item (Join-Path $PSScriptRoot "OmniScientist.ico") $Stage
     Copy-Item (Join-Path $PSScriptRoot "install.ps1") $Stage
     Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $Stage
     @"

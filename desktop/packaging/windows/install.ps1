@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$Uninstall,
     [switch]$PurgeData
@@ -32,6 +32,13 @@ if (-not (Test-Path $Source)) {
 
 New-Item -ItemType Directory -Force $InstallRoot | Out-Null
 Copy-Item -Force $Source $Executable
+
+# 图标也要装过去，快捷方式指的是装好之后那份。只复制 exe 的话，
+# $InstallRoot\OmniScientist.ico 不存在，快捷方式就退回默认图标。
+$IconSource = Join-Path $PSScriptRoot "OmniScientist.ico"
+if (Test-Path $IconSource) {
+    Copy-Item -Force $IconSource (Join-Path $InstallRoot "OmniScientist.ico")
+}
 New-Item -ItemType Directory -Force (Split-Path $Shortcut) | Out-Null
 
 $Shell = New-Object -ComObject WScript.Shell
@@ -39,6 +46,10 @@ $Link = $Shell.CreateShortcut($Shortcut)
 $Link.TargetPath = $Executable
 $Link.WorkingDirectory = $InstallRoot
 $Link.Description = "OmniScientist browser-based research workspace"
+# 快捷方式默认会取 exe 内嵌的图标，但装到别处、或者 exe 换了之后
+# 图标缓存经常不刷新。显式指向随包发出的那份 .ico，行为稳定。
+$IconFile = Join-Path $InstallRoot "OmniScientist.ico"
+if (Test-Path $IconFile) { $Link.IconLocation = $IconFile }
 $Link.Save()
 
 Write-Host "OmniScientist 已安装。"

@@ -141,8 +141,9 @@ const PRESETS: Record<Scope, Record<ProviderId, string[]>> = {
     custom: [],
   },
   vision: {
-    // DeepSeek 官方接口不收 image_url，所以视觉这条线上没有它。
-    deepseek: [],
+    // 2026-08 官方上了 deepseek-v4-flash-vision-exp：OpenAI 格式的 image_url，
+    // base64 data URI 和外链都收，图只能出现在 user 消息里。文本主干仍然不收图。
+    deepseek: ["deepseek-v4-flash-vision-exp"],
     anthropic: ["claude-sonnet-5"],
     openai: ["gpt-5.6-luna", "gpt-5.6-terra"],
     custom: [],

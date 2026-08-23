@@ -1,4 +1,8 @@
-# OmniScientist CLI installer for Windows.
+﻿# OmniScientist CLI installer for Windows.
+#
+# 这个文件必须以 UTF-8 BOM 保存。Windows PowerShell 5.1 读没有 BOM 的文件时
+# 按系统 ANSI 代码页解码，下面的中文会变成乱码，整个脚本报 Unexpected token
+# 直接跑不起来。实测过：去掉 BOM 之后真机解析必失败。
 #
 #   irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex
 #

@@ -96,12 +96,13 @@ prefix and matching quotes are accepted; anything else makes the whole file be
 ignored rather than half-read. The values are removed from the environment at startup
 so the analysis scripts and shell commands the agent runs do not inherit them.
 
-The perception sidecar is a second model: the DeepSeek endpoint takes text only, so
-pixels go to a vision model that returns a bounded observation. Text-only work does not
-need one. It defaults to `claude-sonnet-5` on `ANTHROPIC_API_KEY`; set
+The perception sidecar is a second model that reads the pixels and returns a bounded
+observation; the default backbone `deepseek-v4-flash` is text-only. Text-only work does
+not need one. It defaults to `claude-sonnet-5` on `ANTHROPIC_API_KEY`; set
 `OMNISCI_VISION_PROVIDER`, `OMNISCI_VISION_MODEL` and, for a custom endpoint,
-`OMNISCI_VISION_BASE_URL` to move it. `gpt-5.6-luna` on `OPENAI_API_KEY` is the cheap
-alternative at $0.20 / $1.20 per million tokens. In the desktop build both are picked
+`OMNISCI_VISION_BASE_URL` to move it. `deepseek-v4-flash-vision-exp` runs vision on the
+same `DEEPSEEK_API_KEY`, and `gpt-5.6-luna` on `OPENAI_API_KEY` is the cheap alternative
+at $0.20 / $1.20 per million tokens. In the desktop build both are picked
 from the settings dialog, which sends a real test image before saving.
 
 For any other OpenAI-compatible endpoint as the backbone, set `OMNISCI_BASE_URL`,

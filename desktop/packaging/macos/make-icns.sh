@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # icon-1024.png -> OmniScientist.icns
 #
-# icon-1024.png is committed, already padded to Apple's icon grid (824 of 1024),
+# icon-1024.png is committed. It is the rounded-grey tile with the mark centred on it,
+# composed from icon-glyph-1024.png (the bare transparent mark). A fully transparent
+# icon reads as unfinished in the Dock, which is why the tile exists.
+# Padded to Apple's icon grid (824 of 1024),
 # so no SVG rasterizer is needed. Only sips and iconutil are used, both of which
 # ship with macOS.
 #

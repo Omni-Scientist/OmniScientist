@@ -21,6 +21,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 
 import { dataDir } from "./paths.ts";
@@ -245,10 +246,39 @@ export function resetInterpreterCache(): void {
  *
  * 代价只有两次 existsSync，可以随便调。
  */
-export function ensureManagedToolsOnPath(base: string = dataDir()): void {
+/**
+ * 用户自己装工具的那几个常规目录。
+ *
+ * 从 Finder / Launchpad 启动的 macOS 应用拿到的 PATH 只有
+ * /usr/bin:/bin:/usr/sbin:/sbin，登录 shell 的 PATH 一点都继承不到。于是
+ * brew 装的 poppler、~/.local/bin 里的 tectonic，从终端跑好好的，双击图标
+ * 起来就"不存在"，而 doctor 和 shutil.which 都只会说找不到，不会说为什么。
+ * 实测踩过两次：tectonic 装在 ~/.local/bin 却报 missing；poppler 装在
+ * /opt/homebrew/bin，论文编译完卡在渲染审阅页。
+ *
+ * 只补公认的用户工具目录，且必须真实存在才加，PATH 顺序仍然是受管的在最前。
+ */
+export function userToolDirs(): string[] {
+  // Windows 上没有这个问题：资源管理器启动的程序照常继承注册表里那份用户 PATH，
+  // scoop / choco / winget 装的东西本来就在里面。所以这里不需要补。
+  if (process.platform === "win32") return [];
+  return [
+    join(homedir(), ".local", "bin"),
+    "/opt/homebrew/bin",   // Apple silicon 的 brew
+    "/usr/local/bin",      // Intel mac 的 brew，以及 Linux 上手装的东西
+  ];
+}
+
+export function ensureManagedToolsOnPath(
+  base: string = dataDir(),
+  extraDirs: string[] = userToolDirs(),
+): void {
   const wanted = [join(base, "bin")];
   const venv = venvPython(base);
   if (venv) wanted.push(dirname(venv));
+  // extraDirs 只给测试注入。它默认是 /opt/homebrew/bin 这类绝对路径，
+  // 跑测试那台机器上真实存在，不让测试换掉的话断言测的就不是被测行为了。
+  wanted.push(...extraDirs);
 
   const current = (process.env.PATH || "").split(delimiter).filter(Boolean);
   const missing = wanted.filter((dir) => existsSync(dir) && !current.includes(dir));

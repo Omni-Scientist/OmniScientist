@@ -74,7 +74,7 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 
 每个阶段边运行边输出。产出的东西按顺序落进右侧的研究记录，包括 matplotlib 生成的图、生成它的那段脚本、图背后的数据表，以及最后编译好的论文。
 
-工作台是一个本地网页。上面截图里地址栏的 `127.0.0.1` 就是全部部署。窄屏下自动收成单栏，关闭标签页即停止本轮运行。
+工作台是一个本地网页。上面截图里地址栏的 `127.0.0.1` 就是全部部署。窄屏下自动收成单栏。关闭标签页 30 秒后才停止本轮运行，刷新页面不受影响。
 
 ## 溯源
 
@@ -97,7 +97,7 @@ ANTHROPIC_API_KEY=...
 
 | 版本 | 主干 | 感知模型 |
 |---|---|---|
-| 桌面版、终端版 | `deepseek-v4-flash`，也可用 `OMNISCI_BASE_URL` / `OMNISCI_API_KEY` / `OMNISCI_MODEL` 指向任意 OpenAI 兼容接口 | 默认 `claude-sonnet-5`，用 `OMNISCI_VISION_PROVIDER` / `OMNISCI_VISION_MODEL` 更换 |
+| 桌面版、终端版 | `deepseek-v4-flash`，也可用 `OMNISCI_BASE_URL` / `OMNISCI_API_KEY` / `OMNISCI_MODEL` 指向任意 OpenAI 兼容接口 | 默认 `claude-sonnet-5`，`deepseek-v4-flash-vision-exp` 用同一个 DeepSeek key，`OMNISCI_VISION_PROVIDER` / `OMNISCI_VISION_MODEL` 更换 |
 | engine | 任意，由 `OMNIST_MODEL` 决定，支持 OpenAI、Anthropic、OpenRouter、本地 vLLM 或 sglang，以及自建网关 | `OMNIST_PERCEIVER` |
 
 桌面版在设置面板中配置这两个模型。一套配置需要真实发出一次请求并得到回应才能保存。传输方式由模型名决定，地址和 key 由使用者提供。完整对照表见 [`docs/USAGE.md`](docs/USAGE.md)。

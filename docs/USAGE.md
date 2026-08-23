@@ -48,7 +48,7 @@ python engine/omniscientist/agentic.py --task stead_seismic --stage run
 | `local/...` | Local vLLM / sglang endpoint | `OMNIST_LOCAL_URL`, `OMNIST_LOCAL_KEY` |
 | anything else | OpenAI-compatible gateway (bring your own) | `OMNIST_GATEWAY_URL`, `OMNIST_GATEWAY_KEY` |
 
-Select the backbone with `OMNIST_MODEL`. The perceiver (the model that actually reads images) can be set separately with `OMNIST_PERCEIVER` if you want a reliable vision model while a different backbone drives reasoning. Any model named there must accept image input: `gpt-5.6-luna` and `claude-sonnet-5` both do, `deepseek-*` does not. The sample papers used `claude-sonnet-5` for both roles.
+Select the backbone with `OMNIST_MODEL`. The perceiver (the model that actually reads images) can be set separately with `OMNIST_PERCEIVER` if you want a reliable vision model while a different backbone drives reasoning. Any model named there must accept image input: `gpt-5.6-luna`, `claude-sonnet-5` and `deepseek-v4-flash-vision-exp` all do; the text backbones `deepseek-v4-flash` / `deepseek-v4-pro` do not. The sample papers used `claude-sonnet-5` for both roles.
 
 ## The perception layer
 
