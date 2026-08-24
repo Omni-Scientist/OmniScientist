@@ -150,8 +150,11 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
+            # 用 --generate-notes 而不是 --notes ""。这一步只是占位，正文归
+            # release.yml 管，但万一那边没跑到（比如只手动跑了这条工作流），
+            # 空正文会让发布页整个是白的——v0.1.2 就是这么空的。
             Write-Host "release $tag 还不存在，先建一个草稿"
-            gh release create $tag --draft --title "OmniScientist $($tag -replace '^v', '')" --notes ""
+            gh release create $tag --draft --generate-notes --title "OmniScientist $($tag -replace '^v', '')"
             if ($LASTEXITCODE -ne 0) { throw "建 release $tag 失败" }
           }
           # 只挂 zip。校验和不再一个产物一个文件（release 列表会翻倍），统一进 release.yml

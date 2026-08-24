@@ -911,9 +911,18 @@ async function handleCommand(
   if (cmd === "update") {
     // 手动查，跳过每日节流。仍然只报不装：真要装的是下面那条命令，由用户自己敲。
     out(`  ${DIM}正在查最新版本…${RESET}\n`);
-    const info = await checkForUpdate(VERSION, "cli", { force: true });
-    if (!info) {
-      out(`  当前 ${VERSION}，没有更新（或者查不到 release）\n`);
+    // 带上 onError。不带的话断网和限流也回 null，这里只能含糊地说"或者查不到
+    // release"，把一次没查成和一次查过混为一谈。用户刚亲手敲了 /update，
+    // 他要的是一个明确答复。
+    let failed: string | null = null;
+    const info = await checkForUpdate(VERSION, "cli", {
+      force: true,
+      onError: (reason) => { failed = reason; },
+    });
+    if (failed) {
+      out(`  ${YELLOW}没查成${RESET}：${failed as string}，当前 ${VERSION}\n`);
+    } else if (!info) {
+      out(`  当前 ${VERSION}，已是最新\n`);
     } else {
       out(`  ${YELLOW}有新版本 ${info.latest}${RESET}，当前 ${info.current}\n`);
       out(`  ${info.url}\n`);

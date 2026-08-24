@@ -67,3 +67,7 @@ Thumbs.db
 desktop/launcher/assets.generated.ts
 desktop/dist-desktop/
 scan_leaks.local.json
+
+# 内部翻译工具，跑起来要 LLM API key，不进仓库
+scripts/translate_readme.py
+desktop/tools/translate-locales.ts

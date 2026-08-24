@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/title-dark.png">
-  <img src="assets/title.png" width="560" alt="OmniScientist">
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/title-dark.png">
+  <img src="../assets/title.png" width="560" alt="OmniScientist">
 </picture>
 <br/>
 
@@ -12,7 +12,7 @@
 <a href="https://omni-scientist.github.io/"><img src="https://img.shields.io/badge/Project-Page-blue?style=flat-square&logo=googlechrome&logoColor=white" alt="Project Page"/></a>
 <a href="#citation"><img src="https://img.shields.io/badge/Paper-Technical%20Report-red?style=flat-square&logo=arxiv&logoColor=white" alt="Paper"/></a>
 <a href="https://github.com/Omni-Scientist/OmniScientist/releases"><img src="https://img.shields.io/badge/Download-Releases-black?style=flat-square&logo=github" alt="Releases"/></a>
-<a href="papers/"><img src="https://img.shields.io/badge/Sample-Papers-orange?style=flat-square&logo=readthedocs&logoColor=white" alt="Sample Papers"/></a>
+<a href="../papers/"><img src="https://img.shields.io/badge/Sample-Papers-orange?style=flat-square&logo=readthedocs&logoColor=white" alt="Sample Papers"/></a>
 <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"/></a>
 </p>
 
@@ -41,7 +41,7 @@
 
 <br/>
 
-<img src="assets/teaser.png" width="100%" alt="OmniScientist at a glance">
+<img src="../assets/teaser.png" width="100%" alt="OmniScientist at a glance">
 
 </div>
 
@@ -72,11 +72,11 @@ For the desktop app or the terminal agent, get the line for your machine at
 The desktop edition. A run streams into the transcript on the left while the research log
 on the right collects every figure, script, and the compiled paper as they appear.
 
-<img src="assets/workbench.png" width="100%" alt="The OmniScientist desktop workbench">
+<img src="../assets/workbench.png" width="100%" alt="The OmniScientist desktop workbench">
 
 ## Framework
 
-<img src="assets/framework.png" width="100%" alt="The OmniScientist framework">
+<img src="../assets/framework.png" width="100%" alt="The OmniScientist framework">
 
 Evidence enters as perceptual, symbolic, quantitative, or procedural data across twelve
 modalities. One command runs three stages, each a tool-using loop that looks before it
@@ -90,11 +90,11 @@ The gates are code, and they read an execution record rather than the draft. Eve
 number in the manuscript traces to real `stdout`, and a null result goes back to
 ideation instead of being written up as a finding.
 
-<img src="assets/interface.png" width="100%" alt="From raw evidence to structural cues to a verified finding">
+<img src="../assets/interface.png" width="100%" alt="From raw evidence to structural cues to a verified finding">
 
 ## Demos
 
-A run ends at a compiled PDF containing figures, tables, and references that resolve to real DOIs. Five sample papers are in the [papers/](papers/) directory.
+A run ends at a compiled PDF containing figures, tables, and references that resolve to real DOIs. Five sample papers are in the [papers/](../papers/) directory.
 
 As a worked example, the agent was pointed at STEAD seismic traces that carry a "noise" label. It read the three-component waveforms, found coherent arrivals in traces that should have contained none, and tested them against a surrogate null distribution it generated itself. The command that produces it is:
 
@@ -102,9 +102,9 @@ As a worked example, the agent was pointed at STEAD seismic traces that carry a 
 python engine/omniscientist/agentic.py --task stead_seismic --stage run
 ```
 
-The resulting paper is titled [Coherent polarized signals in a substantial fraction of noise-labeled STEAD traces](papers/seismology_stead_noise.pdf). It reports that 21.7% of the sampled noise-labeled traces carry real signal, with the false-alarm rate held at 1%.
+The resulting paper is titled [Coherent polarized signals in a substantial fraction of noise-labeled STEAD traces](../papers/seismology_stead_noise.pdf). It reports that 21.7% of the sampled noise-labeled traces carry real signal, with the false-alarm rate held at 1%.
 
-<img src="assets/perception_gallery.png" width="100%" alt="Raw observations and the findings derived from reading them">
+<img src="../assets/perception_gallery.png" width="100%" alt="Raw observations and the findings derived from reading them">
 
 ## Citation
 
@@ -119,4 +119,4 @@ The resulting paper is titled [Coherent polarized signals in a substantial fract
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [MIT License](../LICENSE).

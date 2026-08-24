@@ -18,9 +18,169 @@ test("the interface ships in English unless the user picks otherwise", async ({ 
   });
   await page.goto("/");
   // 挑跟视口无关的东西断言：侧边栏在窄视口下会收成抽屉，拿它当锚点测的是布局不是语言。
-  // 语言开关最直接：界面是英文时，它提供的是"切换到中文"。
-  await expect(page.getByRole("button", { name: "切换到中文" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Change interface language" }))
+    .toContainText("English");
   await expect(page.getByRole("button", { name: "Open sidebar" })).toBeVisible();
+});
+
+test("the language picker lists every shipped language and switching takes effect", async ({ page }) => {
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "切换界面语言" });
+  await trigger.click();
+  const menu = page.getByRole("listbox", { name: "切换界面语言" });
+
+  // 顺序是刻意的（英文第一、繁体排在日语前、俄语收尾），不是随便排的，所以按顺序断言。
+  // 这里跟 i18n.tsx 的 LANGS 对齐；check_parity.py 另外保证每门语言都有词条表。
+  await expect(menu.getByRole("option")).toHaveText([
+    "English", "简体中文", "Français", "Español", "繁體中文",
+    "日本語", "한국어", "Português", "Deutsch", "Русский",
+  ]);
+
+  await menu.getByRole("option", { name: "日本語" }).click();
+  // lang 属性要跟着走，CJK 的断行和字体回退靠它
+  await expect(page.locator("html")).toHaveAttribute("lang", "ja");
+  // 选完菜单要关掉
+  await expect(menu).toHaveCount(0);
+  // 真的整棵树重渲染了，而不只是改了个属性。不去断言具体某句日文：
+  // 那些是机器翻译产出的，措辞会变，钉死它等于让翻译更新一次就红一次。
+  await expect(page.getByRole("button", { name: "切换界面语言" })).toHaveCount(0);
+});
+
+test("the language menu always opens below the button, whichever language is selected", async ({ page }) => {
+  // 换掉原生 <select> 的正题就是这个：macOS 会把选中项对齐到鼠标，选到列表
+  // 末尾时菜单整个翻到按钮上方。自绘之后不管选谁，菜单都在按钮下面同一个位置。
+  await page.goto("/");
+  // 比的是菜单**相对按钮**的偏移，不是屏幕绝对坐标：按钮旁边那个"已同步"
+  // 状态标签的文字长度随语言变，会把整组控件左右推，那跟这里要测的事无关。
+  const offsets: string[] = [];
+  for (const native of ["English", "Русский", "简体中文"]) {
+    const trigger = page.getByRole("button", { name: /切换界面语言|Change interface language|Изменить язык интерфейса/ });
+    await trigger.click();
+    const menu = page.getByRole("listbox");
+    const m = (await menu.boundingBox())!;
+    const b = (await trigger.boundingBox())!;
+    // 永远在按钮下沿之下。原生 select 选到末尾时会翻到上方，就是这一条不成立。
+    expect(m.y).toBeGreaterThanOrEqual(b.y + b.height);
+    offsets.push(`${Math.round(m.y - b.y)}/${Math.round(m.x - b.x)}`);
+    await menu.getByRole("option", { name: native }).click();
+  }
+  // 选第 1 个、第 10 个、第 2 个，菜单相对按钮的位置必须一模一样
+  expect(new Set(offsets).size).toBe(1);
+});
+
+test("the language menu is a real listbox and is fully keyboard operable", async ({ page }) => {
+  // 拆掉原生 <select> 就等于把它白送的东西全部拆了：语义、方向键、首字母跳转、
+  // 焦点归位。这条用例盯的就是那些东西有没有补回来。
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: /切换界面语言/ });
+  await trigger.click();
+  const menu = page.getByRole("listbox");
+
+  // 十项必须真的是 option。<ul role=listbox> 里直接套 <li> 会让浏览器把
+  // 内部的 option 角色作废，无障碍树里全变成 button、aria-selected 整个丢掉。
+  //
+  // 这里读的是**浏览器真实的无障碍树**（CDP），不是 Playwright 自己算的角色。
+  // 用 getByRole("option") 断言过一版，它照样绿——Playwright 的角色推断比
+  // Blink 宽松，恰好漏掉的就是这个 bug。屏幕阅读器读的是下面这棵树。
+  const cdp = await page.context().newCDPSession(page);
+  const { nodes } = await cdp.send("Accessibility.getFullAXTree") as {
+    nodes: Array<{ role?: { value?: string }; properties?: Array<{ name: string; value: { value?: unknown } }> }>;
+  };
+  const axOptions = nodes.filter((n) => n.role?.value === "option");
+  expect(axOptions).toHaveLength(10);
+  expect(axOptions.filter((n) =>
+    n.properties?.some((prop) => prop.name === "selected" && prop.value.value === true))).toHaveLength(1);
+  await expect(menu.getByRole("option", { selected: true })).toHaveCount(1);
+
+  // 菜单一开焦点就落在当前语言上，不是停在按钮上
+  await expect(menu.getByRole("option", { name: "简体中文" })).toBeFocused();
+
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("option", { name: "Français" })).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(menu.getByRole("option", { name: "Русский" })).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(menu.getByRole("option", { name: "English" })).toBeFocused();
+  await page.keyboard.press("ArrowUp");          // 从头往上要绕回末尾
+  await expect(menu.getByRole("option", { name: "Русский" })).toBeFocused();
+
+  // 首字母跳转
+  await page.keyboard.press("d");
+  await expect(menu.getByRole("option", { name: "Deutsch" })).toBeFocused();
+
+  // Esc 关掉，焦点回到按钮上（不回的话键盘用户被扔到文档顶部）
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  // 键盘选中同样要归位
+  await page.keyboard.press("ArrowDown");
+  await page.getByRole("listbox").getByRole("option", { name: "日本語" }).press("Enter");
+  await expect(page.locator("html")).toHaveAttribute("lang", "ja");
+  await expect(page.getByRole("button", { name: /インターフェース|言語/ })).toBeFocused();
+});
+
+test("the language menu closes when focus leaves it, and typeahead recovers from a miss", async ({ page }) => {
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: /切换界面语言/ });
+  await trigger.click();
+  const menu = page.getByRole("listbox");
+
+  // 连打没匹配上要拿最后一个字母重新起头。English 和 Español 都是 E 开头，
+  // 所以缓冲区有用；但打完 "d" 再打 "p" 是想去 Português，不是想找 "dp"
+  // 开头的语言，卡在 Deutsch 不动会让人以为键盘失灵。
+  await page.keyboard.press("d");
+  await expect(menu.getByRole("option", { name: "Deutsch" })).toBeFocused();
+  await page.keyboard.press("p");
+  await expect(menu.getByRole("option", { name: "Português" })).toBeFocused();
+
+  // Tab 走人菜单必须跟着关。只靠点外面关的话，键盘用户 Tab 出去之后
+  // 留下一个没人管的浮层挂在界面上。
+  await page.keyboard.press("Tab");
+  await expect(menu).toHaveCount(0);
+});
+
+test.describe("触摸设备", () => {
+  // 不用 devices["iPhone 13"] 整份：它带着 defaultBrowserType: "webkit"，
+  // describe 里用会报错要求换 worker，而且这套 e2e 只跑 chromium。
+  // 真正要的就是下面三个，hasTouch + isMobile 才能让 pointer:coarse 命中。
+  test.use({ viewport: { width: 390, height: 664 }, hasTouch: true, isMobile: true });
+
+  test("the language control keeps a 44px touch target like its neighbours", async ({ page }) => {
+    // 语言选择器原来是原生 <select>（iOS 上弹整屏选择器），自绘之后成了
+    // pointer:coarse 那块里唯一没照顾到的控件：按钮 30px、菜单每行 28px，
+    // 而紧挨着的图标按钮是 44px。
+    //
+    // 这条用例是踩过坑才补的：媒体查询不增加特异性，而 `.lang-toggle` 的基础
+    // 规则（height: 30px）写在本文件更靠后的位置，同特异性后来者赢，所以
+    // 直接写 `.lang-toggle { height: 44px }` 会被静默盖掉，按钮仍然是 30px。
+    await page.goto("/");
+    const trigger = page.getByRole("button", { name: /切换界面语言/ });
+    expect((await trigger.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+    await trigger.click();
+    const option = page.getByRole("listbox").getByRole("option").first();
+    expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+    // 长到 44px 一行之后菜单不能顶出手机视口
+    const menu = (await page.getByRole("listbox").boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(menu.x).toBeGreaterThanOrEqual(0);
+    expect(Math.round(menu.x + menu.width)).toBeLessThanOrEqual(viewport.width);
+    expect(Math.round(menu.y + menu.height)).toBeLessThanOrEqual(viewport.height);
+
+    // 点在正文这种非可点击元素上要能关掉。监听必须是 pointerdown：
+    // iOS Safari 不给非可点击元素补发鼠标事件，用 mousedown 在手机上关不掉。
+    await page.touchscreen.tap(180, 520);
+    await expect(page.getByRole("listbox")).toHaveCount(0);
+  });
+});
+
+test("the language trigger announces which language is active", async ({ page }) => {
+  // 只写"切换界面语言"的话，aria-label 会把可见的语言名盖掉，屏幕阅读器
+  // 用户听不到当前是哪一种（WCAG 2.5.3 也要求可访问名包含可见标签）。
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /切换界面语言.*简体中文/ })).toBeVisible();
 });
 
 test("desktop keeps chat and research outputs side by side", async ({ page }) => {

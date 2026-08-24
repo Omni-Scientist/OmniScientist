@@ -3,16 +3,8 @@
 :root {
   color: #202124;
   background: #ffffff;
-  font-family:
-    "Inter Variable",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    "PingFang SC",
-    "Hiragino Sans GB",
-    "Noto Sans CJK SC",
-    "Microsoft YaHei",
-    sans-serif;
+  /* 跟 --font-sans 是同一份，别再抄一遍列表：抄两份就会只改一份 */
+  font-family: var(--font-sans);
 
   --font-sans:
     "Inter Variable",
@@ -83,6 +75,38 @@
   --purple: #7356a8;
   --purple-soft: #f3effa;
   --red: var(--danger-v2);
+}
+
+/*
+ * 日文、韩文和繁体各自换一套字体栈。
+ *
+ * 上面那份默认栈只排了简体字体。汉字在简繁日三套里字形是不一样的（直、骨、
+ * 今、社这些一眼能看出来），而 Microsoft YaHei 恰好覆盖了大部分日文汉字，
+ * 于是 Windows 上的日文界面不会缺字，只会全程用中文字形写日文，日本人一眼
+ * 就知道这软件没做本地化。韩文更直接，YaHei 的谚文不全，会掉到系统衬线字体。
+ *
+ * macOS 自带 PingFang TC / Hiragino / Apple SD Gothic Neo，问题小得多，
+ * 所以这一段主要是修 Windows。
+ *
+ * lang 属性由 i18n.tsx 的 LangProvider 跟着当前语言写在 <html> 上。
+ * :lang() 是前缀匹配，zh-Hant 这条必须排在任何 :lang(zh) 之后才不会被盖掉。
+ */
+:root:lang(ja) {
+  --font-sans:
+    "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo, "Noto Sans JP", sans-serif;
+}
+
+:root:lang(ko) {
+  --font-sans:
+    "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+}
+
+:root:lang(zh-Hant) {
+  --font-sans:
+    "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans CJK TC", sans-serif;
 }
 
 body,
@@ -1722,6 +1746,21 @@ textarea:focus-visible,
   .artifact-row {
     min-height: 60px;
   }
+
+  /* 语言选择器当初是原生 <select>（在 iOS 上是整屏选择器），自绘之后
+     就成了这块里唯一没照顾到的控件：按钮 30px、菜单每行 28px，
+     而紧挨着它的图标按钮是 44px。 */
+  /* 必须借父级把特异性提到 0,2,0。`.lang-toggle` 的基础规则（height: 30px）
+     写在本文件更靠后的位置，而媒体查询本身不加特异性，同特异性下后来者赢，
+     直接写 `.lang-toggle { height: 44px }` 会被静默盖掉，实测按钮仍是 30px。 */
+  .lang-toggle-box .lang-toggle {
+    height: 44px;
+  }
+
+  /* 这条不用提特异性：基础规则只给了 padding，没给 height，min-height 不冲突。 */
+  .lang-menu button {
+    min-height: 44px;
+  }
 }
 
 /* Model channel settings ---------------------------------------------------
@@ -1870,6 +1909,9 @@ textarea:focus-visible,
 }
 
 .rail-group-warn {
+  /* 药丸里的字不许折行。中文"未配置"三个字怎么都放得下，德语的
+     "Nicht konfiguriert" 放不下，于是折成两行、把圆角撑成一个歪掉的胶囊。 */
+  flex: none;
   padding: 1px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--danger-v2) 12%, transparent);
@@ -1877,6 +1919,7 @@ textarea:focus-visible,
   font-size: var(--text-2xs);
   font-weight: 500;
   letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .rail-item {
@@ -2480,7 +2523,14 @@ textarea:focus-visible,
   border-radius: 0 0 11px 11px;
 }
 
-/* 顶栏右边的中英切换。跟旁边那两个图标按钮一样高，别把这一行撑变形。 */
+/* 顶栏右边的语言选择器。跟旁边那两个图标按钮一样高，别把这一行撑变形。 */
+/* 菜单绝对定位要的上下文。定位挂在外层而不是按钮上，
+   按钮本身可以随内容变宽而不影响菜单的对齐基准。 */
+.lang-toggle-box {
+  position: relative;
+  display: inline-flex;
+}
+
 .lang-toggle {
   display: inline-flex;
   gap: 4px;
@@ -2502,15 +2552,96 @@ textarea:focus-visible,
   color: var(--text-primary-v2);
 }
 
-.lang-toggle span {
-  /* "EN" 两个拉丁字母和"中"一个汉字宽度差不少，给个下限免得按钮一切一跳 */
-  min-width: 15px;
-  text-align: center;
+/* 按钮里显示的是"简体中文""Português"这种全名，十种语言宽度差一大截。
+   固定宽度，不给它伸缩：不固定的话每切一次语言整条顶栏都跟着挪一下，
+   连带下面那个菜单的左边缘也在动。
+   60px 是实测出来的：十个名字里最宽的 Português 在字体回退最差的情况下
+   56.5px。再宽就是白占地方——320px 手机上这条顶栏是定死的，多占一格
+   就从会话标题上扣一格（84px 时标题只剩 56px，四个字都放不下）。 */
+.lang-toggle-current {
+  width: 60px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-/* 底部那条：版本、检查更新、每日检查开关。只提示，不自动装。 */
+.lang-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-v2) 34%, transparent);
+  outline-offset: 1px;
+}
+
+.lang-toggle-caret {
+  flex: none;
+  opacity: 0.55;
+}
+
+/*
+ * 自绘的语言菜单。
+ *
+ * 永远贴着按钮下沿展开，位置跟选中的是第几项无关——原生 <select> 在 macOS 上
+ * 会把选中项对齐到鼠标，选到最后一个（Русский）时整个菜单翻到按钮上方去，
+ * 同一个控件每次弹的地方都不一样。
+ *
+ * right: 0 而不是 left: 0：这个按钮在顶栏靠右，往左展开才不会顶出视口。
+ */
+.lang-menu {
+  position: absolute;
+  /* 只跟同在 .chat-pane（它自己是 z-index:1 的层叠上下文）里的东西比，
+     也就是输入框那层(3)和"回到最新"(8)。写 40 会让人误以为它能压过
+     侧栏(41)、工作台(42)或者遮罩(30)，其实压不过，那些是靠 .chat-pane
+     整体在下面才盖住它的。写 10 免得误导。 */
+  z-index: 10;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 100%;
+  max-height: min(360px, 60vh);
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border-v2);
+  border-radius: 8px;
+  margin: 0;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%), 0 2px 6px rgb(0 0 0 / 6%);
+  list-style: none;
+}
+
+.lang-menu button {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary-v2);
+  font-size: var(--text-xs);
+  line-height: 1.3;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lang-menu button:hover {
+  background: var(--surface-hover-v2);
+  color: var(--text-primary-v2);
+}
+
+.lang-menu button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-v2) 34%, transparent);
+  outline-offset: -2px;
+}
+
+.lang-menu button.is-current {
+  color: var(--text-primary-v2);
+  font-weight: 600;
+}
+
+/* 底部那条：版本、下载进度、检查更新、每日检查开关。 */
 .update-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   min-width: 0;
@@ -2518,18 +2649,77 @@ textarea:focus-visible,
   font-size: var(--text-2xs);
 }
 
+/*
+ * 会伸缩的只有状态文字那一格，按钮和开关一律不许被压。
+ * 不定死的话，下载完成那一刻这行里挤进"已下载并通过校验 + 在文件夹中显示 +
+ * 检查更新 + 每天检查"，flex 会公平地压缩每一项，于是三个按钮各自折成两行，
+ * 整条看着像坏了。德语和俄语的词更长，更容易撞上。
+ */
+.update-row > .update-check,
+.update-row > .update-toggle,
+.update-row > .update-link {
+  flex: none;
+  white-space: nowrap;
+}
+
+.update-row > .update-progress,
+.update-row > .update-current,
+.update-row > .settings-foot-note {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .update-link {
   color: var(--accent-v2);
   font-weight: 600;
-  text-decoration: none;
-}
-
-.update-link:hover {
-  text-decoration: underline;
 }
 
 .update-current {
   color: var(--text-tertiary-v2);
+}
+
+/* 下载进度。下载归本地服务管，这里只是把它的状态画出来。 */
+.update-progress {
+  display: inline-flex;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-secondary-v2);
+}
+
+.update-progress.is-bad {
+  color: var(--danger-v2, #d14343);
+}
+
+.update-progress small {
+  overflow: hidden;
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-bar {
+  width: 96px;
+  height: 5px;
+  border: none;
+  border-radius: 999px;
+  background: var(--border-v2);
+  appearance: none;
+}
+
+.update-bar::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--border-v2);
+}
+
+.update-bar::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent-v2);
+}
+
+.update-bar::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--accent-v2);
 }
 
 .update-check {

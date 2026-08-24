@@ -36,7 +36,7 @@ bun build --compile --minify --define 'process.env.DEV="false"' src/cli.tsx --ou
 
 cd ../desktop
 bun install && bun run build:assets
-bun run typecheck && bun test gateway    # covers the browser and Bun sides
+bun run typecheck && bun test gateway launcher   # covers the browser and Bun sides
 bun run build:desktop                    # -> dist-desktop/omnisci-desktop
 ```
 

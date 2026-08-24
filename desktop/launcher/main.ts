@@ -17,6 +17,7 @@ import { homedir, platform } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 
 import { ASSETS, SKILL_FILES } from "./assets.generated.ts";
+import { UpdateDownloader, isInside } from "./update-download.ts";
 
 const VERSION = "0.1.2";
 const HOST = "127.0.0.1";
@@ -295,6 +296,40 @@ function restrictToOwner(path: string): void {
  * 不做这一步的话，填错的 key 要等到第一条消息才炸，而那时候错误混在 agent 的
  * 输出里，没人知道是 key 的问题。宁可在保存前多等两秒。
  */
+/** 下载目录。产物只落在这里，reveal 也只认这里。 */
+function updateDir(): string {
+  return join(dataDir(), "updates");
+}
+
+const downloader = new UpdateDownloader(updateDir, log);
+/** 最近一次检查报出来的最新版本号。用来判断手上那份下载是不是已经过期。 */
+let latestOffered: string | null = null;
+
+/**
+ * 在系统文件管理器里选中这个文件。起不来就抛，别假装成功。
+ *
+ * 要等 spawn / error 事件落定再返回，不能起完就走。ENOENT 是异步来的（缺
+ * xdg-open 的 Linux 机器上就是这样），不等的话接口已经回了 revealed: true，
+ * 而错误只去了 stderr —— 打包好的桌面版 stderr 哪儿都不去。用户看到的是按钮
+ * 点了没反应，日志里一个字都查不到。
+ */
+async function revealInFileManager(target: string): Promise<void> {
+  const argv = platform() === "darwin"
+    ? ["open", "-R", target]
+    : platform() === "win32"
+      ? ["explorer", `/select,${target}`]
+      : ["xdg-open", dirname(target)];
+  const child = spawn(argv[0]!, argv.slice(1), { stdio: "ignore", detached: true });
+  try {
+    await new Promise<void>((ok, fail) => {
+      child.once("spawn", () => ok());
+      child.once("error", fail);
+    });
+  } finally {
+    child.unref();
+  }
+}
+
 async function probeCredential(
   baseUrl: string, apiKey: string, model: string,
 ): Promise<{ ok: true } | { ok: false; detail: string }> {
@@ -665,7 +700,7 @@ const settings = await import("../gateway/model-config.ts");
 // 从环境变量读走并删掉，提前 import 会读到一片空。
 const { tokenCapField } = await import("../../cli/src/model.ts");
 // 同样晚于 loadEnvFile：它要读 OMNISCI_UPDATE_CHECK 这个开关。
-const { checkForUpdate, updateCheckDisabled, updateCommand } = await import("../../cli/src/update.ts");
+const { checkForUpdate, compareVersions, updateCheckDisabled, updateCommand } = await import("../../cli/src/update.ts");
 const ENV_FILE = process.env.OMNISCI_ENV_FILE || join(OMNI_HOME, "env");
 // 界面上显示用的短路径：绝对路径在自定义 HOME 下能长到三行，纯噪音。
 const ENV_FILE_LABEL = ENV_FILE.startsWith(homedir()) ? ENV_FILE.replace(homedir(), "~") : ENV_FILE;
@@ -789,14 +824,123 @@ try {
       if (request.method === "GET" && url.pathname === "/api/update") {
         // 只查、只报，绝不下载或替换任何东西。force=1 是用户手动点的那次，跳过每日节流。
         const forced = url.searchParams.get("force") === "1";
-        const info = await checkForUpdate(VERSION, "desktop", { force: forced });
+        // 查不成和没新版都是 null。不分开的话，断网时界面会说"已是最新"，
+        // 等于拿一次没查成冒充一次查过。
+        let failed: string | null = null;
+        const info = await checkForUpdate(VERSION, "desktop", {
+          force: forced,
+          onError: (reason) => { failed = reason; },
+        });
+        if (info?.newer) latestOffered = info.latest;
         return Response.json({
           current: VERSION,
           disabled: updateCheckDisabled(),
           update: info,
+          failed,
           howTo: info ? updateCommand("desktop") : null,
         });
       }
+      // 下载新版本到本地并校验，不替换任何东西。
+      //
+      // 以前这里只给一个 release 页面的链接，用户点过去还要自己在十个产物里
+      // 认出哪个是自己平台的。现在直接下对的那个。
+      //
+      // 校验是必须的，不是加分项：这一步产出的是一个用户接下来要双击运行的
+      // 可执行文件，不核对 SHA256SUMS 就等于让他装一个来路没验过的东西。
+      // 校验不过就删掉下载物并报错，绝不留在盘上。
+      if (url.pathname === "/api/update/download") {
+        // 下载在后台跑，进度记在 downloadState 里，前端轮询 GET。做成这样而不是
+        // 让 POST 一直挂着，是因为 120 MB 的包要下好几分钟，而用户在这期间关掉
+        // 设置面板、刷新页面都很正常，不该因此把下载弄没。
+        if (request.method === "GET") {
+          // 手上这份下载已经过期（下的是上一版，之后又发新版了）就扔掉。留着的话
+          // 界面一直显示旧版本"已下载"，而新版本的下载按钮根本出不来。
+          //
+          // 判据是"比最新的旧"，不是"跟最新的不一样"。用不等的话，重新打过 tag
+          // 让 latest 往回走的那一下，会把一份更新的、已经校验过的下载丢掉。
+          const held = downloader.state;
+          if (held.state === "done" && latestOffered
+              && compareVersions(held.version, latestOffered) < 0) {
+            downloader.forget();
+          }
+          return Response.json(downloader.state);
+        }
+        if (request.method === "POST") {
+          // onError 不能省。省了的话断网和限流都回 null，下面那句就变成
+          // "没有可下载的新版本"，把一次没查成说成了一次查过——cli/src/update.ts
+          // 上加 onError 就是为了治这个，而这里是最该分清的一条路：用户刚亲手
+          // 点了下载。
+          let failed: string | null = null;
+          const info = await checkForUpdate(VERSION, "desktop", {
+            force: true,
+            onError: (reason) => { failed = reason; },
+          });
+          if (failed) {
+            return Response.json(
+              { errorKey: "检查失败，{0}", errorArgs: [failed], error: `检查失败，${failed}` },
+              { status: 502 },
+            );
+          }
+          if (!info?.newer) {
+            return Response.json(
+              { errorKey: "没有可下载的新版本", error: "没有可下载的新版本" }, { status: 400 });
+          }
+          // 有新版但这个平台没有对应产物，跟"没有新版"是两回事。混在一起说的话，
+          // 用户看到"没有可下载的新版本"，而发布页上明明摆着一个新版本。
+          if (!info.asset) {
+            return Response.json({
+              errorKey: "{0} 没有适配本平台的产物，请到发布页手动获取",
+              errorArgs: [info.latest],
+              error: `${info.latest} 没有适配本平台的产物，请到发布页手动获取`,
+            }, { status: 400 });
+          }
+          // 这里也要更新。只在 /api/update 里更新的话，两次检查之间发了新版时，
+          // downloader 记的是新版本号而 latestOffered 还是旧的，上面那段会在下载
+          // 刚完成的第一次轮询就把它 forget 掉：进度条从 99% 直接消失，
+          // 那个已经校验过的包留在盘上没人认领。
+          latestOffered = info.latest;
+          downloader.start(info.asset, info.latest);
+          return Response.json(downloader.state, { status: 202 });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/update/cancel") {
+        downloader.cancel();
+        return Response.json(downloader.state);
+      }
+
+      // 在访达/资源管理器里选中刚下载的文件。下载完还要用户自己去翻文件夹
+      // 就白下载了。
+      if (request.method === "POST" && url.pathname === "/api/update/reveal") {
+        const body = await request.json().catch(() => null) as { path?: string } | null;
+        const target = typeof body?.path === "string" ? body.path : "";
+        // 只允许指向我们自己下载目录里的东西，不做成一个任意路径的打开器
+        if (!isInside(updateDir(), target)) {
+          return Response.json(
+            { errorKey: "路径不在下载目录里", error: "路径不在下载目录里" }, { status: 400 });
+        }
+        // 跟上一条分开说。最常见的情况是用户自己把下好的包挪走或删了，
+        // 这时候告诉他"路径不在下载目录里"是句假话，路径明明就在里面。
+        if (!existsSync(target)) {
+          return Response.json({
+            errorKey: "这个文件已经不在了，可能被移走或删除了",
+            error: "这个文件已经不在了，可能被移走或删除了",
+          }, { status: 400 });
+        }
+        // 等它真起来了再回。不等的话，缺 xdg-open 的机器上这里回的是
+        // revealed: true，而用户面前什么都没发生。
+        try {
+          await revealInFileManager(target);
+        } catch (error) {
+          const detail = errorMessage(error);
+          log(`打开文件管理器失败：${detail}`);
+          return Response.json({
+            errorKey: "打不开文件管理器：{0}", errorArgs: [detail],
+            error: `打不开文件管理器：${detail}`,
+          }, { status: 500 });
+        }
+        return Response.json({ revealed: true });
+      }
+
       if (url.pathname === "/api/settings") {
         if (request.method === "GET") {
           // 只回名字和"配没配"，key 本身一个字节都不出这个进程。

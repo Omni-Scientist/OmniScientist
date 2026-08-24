@@ -328,6 +328,299 @@ for needle, why in (
 ):
     must_contain("cli/src/interpreters.ts", needle, why)
 
+# ---------------------------------------------------------------- 界面多语言
+
+def check_locales():
+    """t() 用到的每一句都要在英文表里，i18n 声明的每门语言都要有文件。
+
+    漏一句的后果不是报错，是德语界面上突然冒出一行中文，而且只有说德语的人
+    会看见。所以这件事必须在 CI 里挡，不能靠人肉抽查。
+    """
+    global checked
+    src = os.path.join(ROOT, "desktop", "src")
+
+    i18n = read("desktop/src/lib/i18n.tsx")
+    if i18n is None:
+        return
+    codes = re.findall(r'\{\s*code:\s*"([\w-]+)"', i18n)
+    checked += 1
+    if len(codes) < 2:
+        problems.append("desktop/src/lib/i18n.tsx 里没解析出 LANGS，检查规则失效了")
+        return
+
+    # 中文是源文（键就是中文），没有 zh.ts
+    for code in codes:
+        checked += 1
+        if code == "zh":
+            continue
+        if not os.path.exists(os.path.join(src, "lib", "locales", "%s.ts" % code)):
+            problems.append(
+                "LANGS 里有 %s 但 locales/%s.ts 不存在\n"
+                "      少一张表构建直接失败，因为 i18n.tsx 是静态 import 的" % (code, code))
+            continue
+        # 加一门语言要动三处：LANGS、locales/ 下的表、i18n.tsx 的 import 和
+        # LOCALES 映射。只查前两处的话，"表建好了但忘了 import"会一路绿灯，
+        # 而那门语言在界面上整个回退成英文，没有任何报错。
+        checked += 1
+        var = re.sub(r"-(\w)", lambda m: m.group(1).upper(), code)
+        table = re.search(r"const LOCALES[^{]*\{(.*?)\n\};", i18n, re.S)
+        wired = ('from "./locales/%s"' % code) in i18n and bool(
+            table and re.search(r"(^|[{,\s])(%s|\"%s\")\s*[,:}]" % (var, code), table.group(1)))
+        if not wired:
+            problems.append(
+                "locales/%s.ts 存在，但 i18n.tsx 没有 import 它、或者没登记进 LOCALES\n"
+                "      这门语言会静默回退成英文，构建和运行都不报错" % code)
+
+    en_body = read("desktop/src/lib/locales/en.ts")
+    if en_body is None:
+        return
+    known = set(re.findall(r'^\s*"((?:[^"\\]|\\.)*)":', en_body, re.M))
+
+    # t("…") 的第一个参数是中文原文。跨行调用和模板串不在这条规则的射程内，
+    # 只挡最常见也最容易漏的那种：新写一句 t("中文") 就忘了往表里加。
+    missing = set()
+    for folder, _dirs, files in os.walk(src):
+        for name in files:
+            # 词条表本身不扫。os.walk 给的目录名没有结尾分隔符，所以这里判的是
+            # 目录名本身；写成 `"/locales/" in folder` 那样永远不成立，等于没排除。
+            if not name.endswith((".ts", ".tsx")) or os.path.basename(folder) == "locales":
+                continue
+            with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                text = handle.read()
+            for literal in re.findall(r'\bt\(\s*"((?:[^"\\]|\\.)+)"', text):
+                if re.search(r"[一-鿿]", literal) and literal not in known:
+                    missing.add(literal)
+
+    checked += 1
+    if missing:
+        problems.append(
+            "这些 t() 的原文不在 locales/en.ts 里，非中文界面上会露出中文：\n      %s"
+            % "\n      ".join(sorted(missing)[:12]))
+
+    # 通道的 label / hint 是**服务端**给的，前端拿到就直接显示，不经过 t() 的
+    # 字面量，所以上面那条规则查不到它们。漏过一次：英文界面的模型列表里赫然
+    # 写着"自定义端点"。前端现在会把它们过一遍 t()，但键得先在 en.ts 里有。
+    config = read("desktop/gateway/model-config.ts")
+    if config is not None:
+        checked += 1
+        server_side = set()
+        for value in re.findall(r'^\s*(?:label|hint):\s*"((?:[^"\\]|\\.)+)"', config, re.M):
+            if re.search(r"[一-鿿]", value) and value not in known:
+                server_side.add(value)
+        if server_side:
+            problems.append(
+                "model-config.ts 这些通道文案会直接显示在界面上，但不在 locales/en.ts 里：\n      %s"
+                % "\n      ".join(sorted(server_side)))
+
+    # 启动器抛给界面的错误也一样：DownloadError 的第一个参数和接口回的 errorKey
+    # 都是词条键，界面拿去过 t()。表里没有就等于英文界面上糊一句中文。
+    for rel, pattern in (
+        ("desktop/launcher/update-download.ts", r'new DownloadError\(\s*"((?:[^"\\]|\\.)+)"'),
+        ("desktop/launcher/main.ts", r'errorKey:\s*"((?:[^"\\]|\\.)+)"'),
+    ):
+        body = read(rel)
+        if body is None:
+            continue
+        checked += 1
+        gone = sorted({v for v in re.findall(pattern, body)
+                       if re.search(r"[一-鿿]", v) and v not in known})
+        if gone:
+            problems.append(
+                "%s 这些错误文案会显示在界面上，但不在 locales/en.ts 里：\n      %s"
+                % (os.path.basename(rel), "\n      ".join(gone)))
+
+
+check_locales()
+
+# README 的语言切换行指到哪，哪就得有文件。链接指向 404 比不给链接更糟。
+# 译文住在 docs/i18n/，英文那份留在根目录（GitHub 首页要它）。
+I18N_DIR = "docs/i18n"
+
+
+def translated_readmes():
+    """所有译文的仓库相对路径。挪过一次位置，别再按根目录硬找。"""
+    folder = os.path.join(ROOT, I18N_DIR)
+    if not os.path.isdir(folder):
+        return []
+    return ["%s/%s" % (I18N_DIR, f) for f in sorted(os.listdir(folder))
+            if re.match(r"^README_[\w-]+\.md$", f)]
+
+
+# 每份 README 都有同一条语言切换行，死链要一起查。只查英文那份的话，
+# 译文里同样的死链没人管。链接是相对各自所在目录解析的。
+for _source in ["README.md"] + translated_readmes():
+    _body = read(_source)
+    if _body is None:
+        continue
+    _base = os.path.dirname(os.path.join(ROOT, _source))
+    for _target in sorted(set(re.findall(r'href="([\w./-]*README[\w.-]*\.md)"', _body))):
+        checked += 1
+        if not os.path.exists(os.path.normpath(os.path.join(_base, _target))):
+            problems.append("%s 的语言切换行指向 %s，但这个文件不存在" % (_source, _target))
+
+
+def check_language_order():
+    """README 的语言行和软件里的下拉必须同一个顺序、同一批语言。
+
+    分家过一次：README 把繁體中文排在简体后面，软件排在日語前面。同一个人在
+    官网和软件里看到两份清单，会以为其中一处漏了语言。
+    """
+    global checked
+    checked += 1
+    i18n = read("desktop/src/lib/i18n.tsx")
+    readme = read("README.md")
+    if i18n is None or readme is None:
+        return
+    in_app = re.findall(r'native:\s*"([^"]+)"', i18n)
+    # 语言行长这样：<strong>English</strong> · <a href="README_zh.md">简体中文</a> · …
+    line = next((l for l in readme.split("\n") if "README_zh.md" in l), "")
+    # href 里允许带目录：译文挪进 docs/i18n/ 之后，语言行写的是
+    # docs/i18n/README_zh.md，写死 README 开头就一个名字都抓不到，
+    # 而这条检查会安静地退化成「只有 English」，看着像 README 出了问题。
+    in_readme = re.findall(
+        r"<strong>([^<]+)</strong>|<a href=\"[\w./-]*README[\w.-]*\.md\">([^<]+)</a>", line)
+    in_readme = [a or b for a, b in in_readme]
+    if in_app != in_readme:
+        problems.append(
+            "README.md 的语言行跟 i18n.tsx 的 LANGS 顺序或内容对不上\n"
+            "      软件   %s\n      README %s" % (" ".join(in_app), " ".join(in_readme)))
+
+
+check_language_order()
+
+
+def check_translated_readmes():
+    """每份译文的骨架必须跟 README.md 一模一样。
+
+    译文是机器翻出来的，模型偶尔会吞掉一个标题、少翻一个列表项、把代码块改一个
+    字。这些在日文或俄文页面上没人看得出来"少了什么"，只会觉得这软件做了一半。
+    所以拿英文那份当基准逐项对。文字当然不同，对的是结构和那些不该动的东西。
+
+    README_paper.md 不在此列：那是面向论文的另一篇，不是 README.md 的译文。
+    """
+    global checked
+    src = read("README.md")
+    if src is None:
+        return
+
+    # 注释和目录树里的说明文字是**应该**被翻译的（手写的中文版就翻了）。
+    # 这里要守的不是逐字节相同，是"用户复制粘贴的那条命令没被改过"。所以先把
+    # 注释和各语种的文字抠掉再比，留下命令、路径和目录树的框线。
+    words = re.compile(r"[Ѐ-ӿ　-〿぀-ヿ一-鿿가-힯＀-￯]+")
+
+    def commands(text):
+        out = []
+        for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
+            block = re.sub(r"#[^\n]*", "", block)
+            if "├" in block or "└" in block:
+                # 目录树。每行后面那串说明本来就该翻（英文版是英文，中文版是中文），
+                # 能对的是框线和路径本身，所以每行只留这两样。
+                kept = []
+                for line in block.split("\n"):
+                    hit = re.match(r"^([\s│├└─]*)(\S+)", line)
+                    if hit:
+                        kept.append(hit.group(1).rstrip() + " " + hit.group(2))
+                block = "\n".join(kept)
+            else:
+                block = words.sub("", block)
+            out.append(re.sub(r"[ \t]+", " ", block).strip())
+        return sorted(out)
+
+    def norm(ref, where, mod=os.path):
+        """把相对引用归一化到仓库根。
+
+        同一张图在 README.md 里写 assets/x.png，在 docs/i18n/ 里写
+        ../../assets/x.png，指的是同一个文件。不归一化就会把「挪了目录」
+        报成「链接对不上」。
+        """
+        # 结果统一成正斜杠。os.path.normpath 在 Windows 上给的是反斜杠，
+        # docs\i18n\README_zh.md 匹配不上下面那条写死正斜杠的排除规则，
+        # 于是兄弟语言的链接没被排除，Windows 的 CI 报「外链 31 对 30」，
+        # 而 macOS 和 Linux 上全绿——最难查的那种。
+        return mod.normpath(mod.join(mod.dirname(where), ref)).replace("\\", "/")
+
+    def facts(text, where):
+        return {
+            "代码围栏": text.count("```"),
+            "标题层级": [len(m.group(1)) for m in re.finditer(r"^(#{1,6}) ", text, re.M)],
+            "列表项": len(re.findall(r"^\s*[-*] ", text, re.M)),
+            "表格行": len(re.findall(r"^\|.*\|$", text, re.M)),
+            "图片": sorted({norm(v, where) for v in re.findall(r'src="([^"]+)"', text)
+                          if not v.startswith("http")}),
+            "命令": commands(text),
+            # 语言切换行每份都不一样（当前语言加粗），所以 README_*.md 排除。
+            # 页内锚点也排除，它们指向的是被翻译过的标题。
+            "外链": sorted({
+                x if x.startswith("http") else norm(x, where)
+                for x in re.findall(r"\]\(([^)]+)\)", text) + re.findall(r'href="([^"]+)"', text)
+                if not x.startswith("#")
+                and not re.match(r"^(docs/i18n/)?README(_[\w-]+)?\.md$",
+                                 x if x.startswith("http") else norm(x, where))}),
+        }
+
+    def numbers(text):
+        """正文里出现的数字，按出现次数计。
+
+        版本号、日期、arXiv 编号、论文里报的 21.7% 都在这里面，模型把它们改一个
+        字，读那份译文的人就拿到了一个假数据，而且没有任何办法发现。
+
+        比之前先规范化：法语、德语、俄语用小数逗号，`21.7%` 在法语版里正确写法是
+        `21,7 %`，这是排版不是错误。百分号前的空格（含不换行空格）也一并抹掉。
+        """
+        from collections import Counter
+        # 先把链接和路径整段抠掉。译文跟原文不在同一层目录，`docs/i18n/`
+        # 只出现在原文那份，而 "i18n" 里带数字，比出来就是「译文少了九个 18」，
+        # 纯噪音。要比的是正文里的数据，不是路径。
+        text = re.sub(r'\]\([^)]*\)|href="[^"]*"|src="[^"]*"|https?://\S+', ' ', text)
+        flat = re.sub(r"(?<=\d)[,  ](?=\d)", ".", text)
+        flat = re.sub(r"(?<=\d)[  ]+%", "%", flat)
+        return Counter(re.findall(r"\d+(?:[.\-]\d+)*", flat))
+
+    # 自检：norm() 必须吐正斜杠。忘了 replace(os.sep, "/") 的话，这份脚本在
+    # macOS 和 Linux 上全绿、只在 Windows 的 CI 上红，而且报的是「外链 31 对 30」
+    # 这种跟根因毫无关系的话。2026-08-24 就是这么烧掉一轮 CI 的。
+    # 拿 ntpath 显式跑一遍 Windows 语义。只用 os.path 的话，这条自检在
+    # macOS 和 Linux 上永远是绿的（那两个平台本来就吐正斜杠），等于摆设，
+    # 而它要防的恰恰是「本机全绿、只有 Windows 的 CI 红」。
+    checked += 1
+    import ntpath
+    if "\\" in norm("../../assets/x.png", "docs/i18n/README_zh.md", ntpath):
+        problems.append(
+            "check_parity 的 norm() 在 Windows 语义下吐反斜杠\n"
+            "      后果是这份脚本在 macOS/Linux 全绿、只在 Windows 的 CI 上红，"
+            "而且报的是「外链数量对不上」这种跟根因无关的话")
+
+    want = facts(src, "README.md")
+    want_nums = numbers(src)
+    for name in translated_readmes():
+        checked += 1
+        body = read(name)
+        if body is None:
+            continue
+        if "⟦" in body:
+            problems.append("%s 里残留了翻译占位符 ⟦⟧，说明生成过程出错了" % name)
+            continue
+        got = facts(body, name)
+        diff = [k for k in want if want[k] != got[k]]
+        if diff:
+            size = lambda v: len(v) if isinstance(v, list) else v   # noqa: E731
+            problems.append("%s 的结构跟 README.md 对不上：%s" % (
+                name, "；".join("%s 原文 %s 译文 %s" % (k, size(want[k]), size(got[k])) for k in diff)))
+
+        # 只查"原文有、译文没有"，不查译文多出来的。
+        #
+        # 多出来是正常的：日语习惯把英文拼写的数词写成阿拉伯数字（Ten languages
+        # 是 10言語，twelve modalities 是 12のモダリティ），中文也一样。真正危险的
+        # 只有一个方向——原文里的某个数字在译文里不见了，那说明它被改写成了别的值，
+        # 而读那份译文的人拿到的就是一个假数据。21.7% 被写成 31.7% 正是这样露馅的。
+        checked += 1
+        lost = want_nums - numbers(body)
+        if lost:
+            problems.append("%s 里少了 README.md 有的数字 %s，八成是被改写了" % (name, dict(lost)))
+
+
+check_translated_readmes()
+
 # ---------------------------------------------------------------- 结果
 
 if problems:

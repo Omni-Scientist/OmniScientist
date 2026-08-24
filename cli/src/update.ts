@@ -120,11 +120,15 @@ interface Release {
 /**
  * 问一次 GitHub。`force` 跳过每日节流，给用户手动触发的那条路用。
  * 返回 null 表示"这次不该提示"：关掉了、今天查过了、或者查失败了。
+ *
+ * 这四种情况都是 null，对后台那次检查来说够了（不提示就完了）。但用户亲手点
+ * "检查更新"的时候不够：查失败也回 null，界面就只能说"已是最新"，把一次没查成
+ * 说成了一次查过。要区分的调用方传 onError，失败时会拿到原因。
  */
 export async function checkForUpdate(
   currentVersion: string,
   kind: "cli" | "desktop",
-  options: { force?: boolean; timeoutMs?: number } = {},
+  options: { force?: boolean; timeoutMs?: number; onError?: (reason: string) => void } = {},
 ): Promise<UpdateInfo | null> {
   if (!options.force && updateCheckDisabled()) return null;
 
@@ -148,10 +152,15 @@ export async function checkForUpdate(
       headers: { Accept: "application/vnd.github+json", "User-Agent": `OmniScientist/${currentVersion}` },
       signal: AbortSignal.timeout(options.timeoutMs ?? 4000),
     });
-    if (!response.ok) return null;      // 404（还没发过 release）、403（限流）都当没有新版本
+    if (!response.ok) {                  // 404（还没发过 release）、403（限流）
+      options.onError?.(`GitHub 返回 ${response.status}`);
+      return null;
+    }
     release = (await response.json()) as Release;
-  } catch {
-    return null;                        // 网络不通不该让任何东西失败
+  } catch (error) {
+    // 网络不通不该让任何东西失败，但也不该被当成"已是最新"
+    options.onError?.(error instanceof Error ? error.message : String(error));
+    return null;
   }
 
   const latest = String(release.tag_name ?? "").replace(/^v/, "");

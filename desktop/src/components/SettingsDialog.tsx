@@ -14,6 +14,11 @@ import {
   EFFORTS,
   checkUpdate,
   type UpdateState,
+  startDownload,
+  pollDownload,
+  cancelDownload,
+  revealDownload,
+  type DownloadState,
 } from "../lib/settings";
 import { t } from "../lib/i18n";
 
@@ -31,6 +36,10 @@ interface Selection {
 
 /** 下拉框里表示"新加一个"的哨兵值。模型名不会长这样。 */
 const ADD = "__add__";
+
+const percent = (got: number, all: number) => `${Math.floor((got / all) * 100)}%`;
+const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
  * 正在用的排最前，配好的次之，没配的沉底。
@@ -81,6 +90,11 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
   const [checked, setChecked] = useState(false);
   /** 开关点下去到本地后端确认之间，先信用户点的那下。null 表示没有在途的改动。 */
   const [wantCheck, setWantCheck] = useState<boolean | null>(null);
+  const [download, setDownload] = useState<DownloadState>({ state: "idle" });
+  /** 点了下载但服务端还没确认。只用来给按钮转圈，不参与 download 那套状态。 */
+  const [starting, setStarting] = useState(false);
+  /** 打开文件管理器失败的原因。单独存，免得把 download 里的文件路径冲掉。 */
+  const [revealError, setRevealError] = useState<string | null>(null);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -103,12 +117,61 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       });
-    // 顺带看一眼版本。走每日节流，不强制，查不到就当没有。
-    checkUpdate().then((u) => { if (!cancelled) setUpdate(u); }).catch(() => {});
+    // 顺带看一眼版本。走每日节流，不强制。
+    //
+    // 拉下载状态必须排在检查后面，不能并发。服务端要靠"最近一次检查报出的最新
+    // 版本号"来判断手上那份下载是不是过期了，而检查要往 GitHub 跑一趟（最多 4 秒），
+    // 下载状态那个接口是同步返回的。并发的话下载状态永远先到，拿到的是上一轮的
+    // 判断，于是下过旧版本之后，新版本被"已下载"挡着显示不出来。
+    //
+    // 这里的失败是**本地服务**的失败（GitHub 那边的失败会带着 failed 字段正常
+    // 返回），所以不能吞：吞了整行更新信息就是一片空白，没有任何解释。
+    checkUpdate()
+      .then((u) => { if (!cancelled) setUpdate(u); })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setUpdate({ current: "", disabled: false, update: null, failed: message(e), howTo: null });
+        }
+      })
+      .finally(() => {
+        // 下载归本地服务管，可能是上次打开面板时点的、现在还在下。
+        pollDownload()
+          .then((d) => { if (!cancelled) setDownload(d); })
+          .catch(() => { /* 下载状态取不到不该顶掉上面那条更有用的提示 */ });
+      });
     return () => {
       cancelled = true;
     };
   }, [open]);
+
+  // 下载期间每秒问一次进度。只在真的有下载在跑的时候才起这个定时器。
+  //
+  // 单次取不到就吞掉：下载要好几分钟，中间掉一两次不值得报错。但一直取不到
+  // 就是另一回事了（本地服务被关掉、崩了），再吞下去界面会永远停在"正在下载"，
+  // 而那个进度条其实早就不动了。连丢五次就认输。
+  useEffect(() => {
+    if (!open || download.state !== "downloading") return;
+    let cancelled = false;
+    let misses = 0;
+    const timer = setInterval(() => {
+      pollDownload().then(
+        (next) => {
+          if (cancelled) return;
+          misses = 0;
+          setDownload(next);
+        },
+        (error: unknown) => {
+          if (cancelled) return;
+          misses += 1;
+          if (misses >= 5) setDownload({ state: "error", message: message(error) });
+        },
+      );
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [open, download.state]);
 
   function channelOf(next: SettingsState, target: Selection): ChannelInfo | undefined {
     return (target.scope === "vision" ? next.vision : next.providers).find((c) => c.id === target.id);
@@ -232,7 +295,10 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
                       >
                         <span className={`rail-dot${live ? " is-live" : item.masked ? " is-ready" : ""}`} />
                         <span className="rail-copy">
-                          <strong>{item.label}</strong>
+                          {/* label 和 hint 是服务端给的中文原文，跟 t() 的键同源，
+                              直接过一遍就有译文。DeepSeek / Claude / OpenAI 这些
+                              专名在词表里查不到，t() 会原样退回来，正是想要的。 */}
+                          <strong>{t(item.label)}</strong>
                           <small>{live ? item.activeModel : item.masked ? t("已配置") : t("未配置")}</small>
                         </span>
                         {live ? <span className="rail-live">{t("使用中")}</span> : null}
@@ -246,8 +312,8 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
             <section className="provider-detail">
               <div className="detail-head">
                 <div>
-                  <h3>{current?.label}</h3>
-                  <p>{current?.hint}</p>
+                  <h3>{current ? t(current.label) : ""}</h3>
+                  <p>{current ? t(current.hint) : ""}</p>
                 </div>
                 {/* 绿色只留给"正在用"。配好了但没在用是描边，不然满屏绿分不出来。 */}
                 <span className={"detail-state" + (isActive ? " is-live" : hasKey ? " is-ready" : "")}>
@@ -543,28 +609,124 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
 
           <footer className="settings-foot">
             <div className="update-row">
-              {update?.update?.newer ? (
+              {download.state === "downloading" ? (
+                <span className="update-progress">
+                  <progress
+                    className="update-bar"
+                    // 服务器不给 content-length 时 total 是 0。这时候 <progress>
+                    // 不带 value 就是不确定态的滚动条，别拿 0 当分母画成永远的 0%。
+                    {...(download.total > 0
+                      ? { value: download.received, max: download.total }
+                      : {})}
+                  />
+                  <small>
+                    {download.total > 0
+                      ? t("正在下载 {0}，{1}", download.version, percent(download.received, download.total))
+                      : t("正在下载 {0}，已取 {1}", download.version, mib(download.received))}
+                  </small>
+                </span>
+              ) : download.state === "done" ? (
+                <span className="update-progress">
+                  <small>{t("{0} 已下载并通过校验", download.version)}</small>
+                </span>
+              ) : download.state === "error" ? (
+                <span className="update-progress is-bad">
+                  {/* 服务端带了 key 就用 key 翻，翻不了的（底层 fetch 抛的超时、
+                      断网）才照搬原文。直接显示 message 的话，英文界面上会
+                      冒出一整句中文。 */}
+                  <small>{download.key ? t(download.key, ...(download.args ?? [])) : download.message}</small>
+                  {/* 下载失败时更要把发布页留着。这个平台没有对应产物就属于
+                      这种：本机下不动，但新版本确实存在，用户得有路去拿。 */}
+                  {update?.update?.newer ? (
+                    <a className="update-link" href={update.update.url} target="_blank" rel="noreferrer">
+                      {t("发布页")}
+                    </a>
+                  ) : null}
+                </span>
+              ) : update?.update?.newer ? (
                 <a className="update-link" href={update.update.url} target="_blank" rel="noreferrer">
                   {t("有新版本 {0}", update.update.latest)}
                 </a>
               ) : (
                 <span className="update-current">
-                  {update ? t("版本 {0}", update.current) + (checked ? t("，已是最新") : "") : ""}
+                  {update?.current ? t("版本 {0}", update.current) : ""}
                 </span>
               )}
+
+              {download.state === "done" ? (
+                <button
+                  type="button"
+                  className="update-check"
+                  onClick={() => {
+                    setRevealError(null);
+                    // 失败了只报错，绝不把 done 改掉。done 里存着那个已经下好
+                    // 并校验过的文件路径，客户端别处没有第二份，一改就等于让用户
+                    // 把 120 MB 重下一遍。
+                    revealDownload(download.path).catch((e: unknown) => setRevealError(message(e)));
+                  }}
+                >
+                  {t("在文件夹中显示")}
+                </button>
+              ) : download.state === "downloading" ? (
+                <button
+                  type="button"
+                  className="update-check"
+                  onClick={() => {
+                    cancelDownload()
+                      .then(setDownload)
+                      .catch((e: unknown) => setDownload({ state: "error", message: message(e) }));
+                  }}
+                >
+                  {t("取消")}
+                </button>
+              ) : update?.update?.newer ? (
+                <button
+                  type="button"
+                  className="update-check"
+                  disabled={starting}
+                  onClick={() => {
+                    // 不抢先把状态画成 downloading。POST 里要先向 GitHub 问一次
+                    // 最新版本，这一来一回期间轮询已经起来了，会把服务端"还没开始"
+                    // 的旧状态取回来盖掉，进度条闪一下没了，上一次的错误或者上一次
+                    // 下好的文件名还会冒出来。按钮转圈用单独的 starting 就够了。
+                    setStarting(true);
+                    startDownload()
+                      .then(setDownload)
+                      .catch((e: unknown) => setDownload({ state: "error", message: message(e) }))
+                      .finally(() => setStarting(false));
+                  }}
+                >
+                  {starting ? t("检查中…") : t("下载")}
+                </button>
+              ) : null}
+
               <button
                 type="button"
                 className="update-check"
-                disabled={checking}
+                disabled={checking || starting || download.state === "downloading"}
                 onClick={() => {
                   setChecking(true);
                   setChecked(false);
+                  setRevealError(null);
+                  // 只清错误提示。清掉 done 的话，那个下好并校验过的文件就再也
+                  // 找不回来了（路径只在这个状态里），而"下载"按钮会回来，
+                  // 再点一次就是把同一个 120 MB 的包重下一遍。
+                  if (download.state === "error") setDownload({ state: "idle" });
                   checkUpdate(true)
                     .then((next) => {
                       setUpdate(next);
-                      setChecked(!next.update?.newer);
+                      setChecked(!next.failed && !next.update?.newer);
+                      // 顺手把下载状态也拉一次。服务端会在这时候丢掉过期的
+                      // done（下的是上一版），不重新拉的话客户端还捧着那份旧的，
+                      // 于是新版本的下载按钮被"已下载"挡在后面，怎么点都出不来。
+                      //
+                      // 这一步自己吞掉失败，不能让它掉进下面那个 catch：那个
+                      // catch 写的是 update.failed，界面会显示"检查失败"。
+                      // 一次 5 秒超时的轮询把一次成功的版本检查说成失败，是假话。
+                      void pollDownload().then(setDownload).catch(() => {});
                     })
-                    .catch(() => {})
+                    .catch((e: unknown) => setUpdate((prev) =>
+                      prev ? { ...prev, failed: message(e) } : prev))
                     .finally(() => setChecking(false));
                 }}
               >
@@ -586,6 +748,23 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
                 />
                 {t("每天检查")}
               </label>
+              {/*
+                检查的结果单独占一格，不跟下载状态挤同一个位置。挤在一起的话
+                下载状态永远排在前面，于是下好之后再点"检查更新"，无论查成还是
+                没查成，屏幕上一个字都不变，看着像按钮坏了。
+              */}
+              {revealError ? (
+                <span className="update-progress is-bad"><small>{revealError}</small></span>
+              ) : update?.failed ? (
+                // 断网、限流的时候这里以前显示"已是最新"，等于拿一次没查成
+                // 冒充一次查过，用户会以为自己在最新版上。
+                <span className="update-progress is-bad">
+                  <small>{t("检查失败，{0}", update.failed)}</small>
+                </span>
+              ) : checked ? (
+                <span className="update-current">{t("已是最新")}</span>
+              ) : null}
+
               <span className="settings-foot-note">
                 {canUse ? "" : isActive ? "" : t("测试通过之后才能启用")}
               </span>

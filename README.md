@@ -25,10 +25,22 @@
 </p>
 
 <p align="center">
-<strong>English</strong> · <a href="README_zh.md">简体中文</a>
+<strong>English</strong> · <a href="docs/i18n/README_zh.md">简体中文</a> · <a href="docs/i18n/README_fr.md">Français</a> · <a href="docs/i18n/README_es.md">Español</a> · <a href="docs/i18n/README_zh-Hant.md">繁體中文</a> · <a href="docs/i18n/README_ja.md">日本語</a> · <a href="docs/i18n/README_ko.md">한국어</a> · <a href="docs/i18n/README_pt.md">Português</a> · <a href="docs/i18n/README_de.md">Deutsch</a> · <a href="docs/i18n/README_ru.md">Русский</a>
 </p>
 
 </div>
+
+---
+
+## News
+
+- **2026-08-24** · **Multi-language support.** The workspace interface and this page are both available in multiple languages, listed at the top of this page and switched from the toolbar in the app.
+- **2026-08-23** · **DeepSeek multimodal support.** `deepseek-v4-flash-vision-exp` joins the perception sidecar, so one DeepSeek key now covers both reasoning and vision. *(v0.1.2)*
+- **2026-08-18** · **First patch release.** Release assets carry a single `SHA256SUMS`, and the installers verify it before installing. *(v0.1.1)*
+- **2026-08-16** · **First public release.** Desktop app, terminal agent, and a Claude Code skill, from one codebase. *(v0.1.0)*
+- **2026-08-13** · **Technical report.** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558), with runs across twelve modalities.
+
+---
 
 <img src="assets/shot-paper.jpg" width="100%" alt="The compiled paper in the research log, each highlighted number linked to the run that produced it">
 
@@ -73,6 +85,8 @@ The terminal agent also installs in one line. Use `curl -fsSL https://raw.github
 Each stage streams into the transcript, and every artifact lands in the research log the moment it exists. That covers the matplotlib output, the script that drew it, the data table behind it, and at the end the compiled paper.
 
 The workspace is a local web app. The address bar in the screenshots above reads `127.0.0.1` because that is the entire deployment. The layout collapses to one column on a phone. Closing the tab stops the run after a 30-second grace period, so a page refresh keeps it alive.
+
+The interface follows the browser's language on first launch and is switched from the toolbar, in English, Simplified and Traditional Chinese, French, Spanish, Japanese, Korean, Portuguese, German and Russian.
 
 ## Provenance
 
@@ -125,7 +139,7 @@ python3 scripts/check_parity.py      # engine, both skills and the desktop agree
 python3 skill/build.py               # the skill is still self-contained
 
 cd cli      && bun run typecheck && bun test
-cd desktop  && bun run build:assets && bun run typecheck && bun test gateway && bun run test:e2e
+cd desktop  && bun run build:assets && bun run typecheck && bun test gateway launcher && bun run test:e2e
 ```
 
 CI runs all of the above plus a live smoke test of the compiled launcher on every push. Tagging `v*` builds and publishes the release artifacts.
@@ -156,7 +170,7 @@ Notes on the two skill editions, the generated files and the per-platform build 
 
 ## Status
 
-Early software, version `0.1.1`. Interfaces are still moving and releases can change them.
+Early software, version `0.1.2`. Interfaces are still moving and releases can change them.
 
 | Platform | Terminal agent | Desktop |
 |---|---|---|
@@ -201,7 +215,7 @@ The technical report behind this software is on [arXiv](https://arxiv.org/abs/26
 }
 ```
 
-The paper-facing version of this page, with authors and affiliations, is [`README_paper.md`](README_paper.md).
+The paper-facing version of this page, with authors and affiliations, is [`README_paper.md`](docs/README_paper.md).
 
 ## License
 

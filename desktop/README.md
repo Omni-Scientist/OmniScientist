@@ -75,7 +75,7 @@ cd ../desktop && bun install
 bun run dev:local            # vite on :4317, gateway on :4318, real backend
 bun run build:assets         # vite build + generate the embedded asset module
 bun x tsc --noEmit
-bun test gateway
+bun test gateway launcher
 bun run build:desktop        # -> dist-desktop/omnisci-desktop
 ```
 

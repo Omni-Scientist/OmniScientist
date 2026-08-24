@@ -37,7 +37,7 @@ import {
 import Markdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
-import { t, useLang } from "../lib/i18n";
+import { LANGS, t, useLang, type Lang } from "../lib/i18n";
 import type { Artifact, ChatMessage, ChatSession, MessageBlock, ResearchTrace, ToolStep } from "../types";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { IconButton } from "./IconButton";
@@ -492,23 +492,164 @@ function EmptyConversation({ onPrompt, workspace }: { onPrompt: (prompt: string)
 }
 
 /**
- * 中英切换。只有两种语言，所以不做下拉，点一下就换过去，
- * 按钮上直接写要切到哪一种（"EN" / "中"），不用猜。
+ * 语言切换。
+ *
+ * 自绘下拉，不用原生 <select>。原生的省事，但有两处忍不了：
+ *
+ *   1. 弹出层是系统画的，跟这套界面的底色、圆角、字号全对不上。
+ *   2. macOS 的 popup button 会把**当前选中项**对齐到鼠标位置。选到列表末尾的
+ *      俄语时，整个菜单翻到按钮上方去了，同一个控件每次弹的位置都不一样。
+ *
+ * 所以这里自己画，永远贴着按钮下沿展开，位置跟选中谁无关。代价是键盘、点外面
+ * 关闭、无障碍要自己接，下面都接了。
+ *
+ * 选项名一律用该语言自己的写法（日本語 / Русский），看得懂那个名字的人
+ * 正是要选它的人。语言是全局状态（见 i18n 的 LangProvider），整个界面只此一个
+ * 开关，切了之后所有组件跟着重渲染。
  */
 function LanguageToggle() {
   const [lang, setLang] = useLang();
-  const next = lang === "zh" ? "en" : "zh";
+  const [open, setOpen] = useState(false);
+  /** 键盘焦点停在第几项。roving tabindex：只有它是 tab 停靠点。 */
+  const [active, setActive] = useState(0);
+  const box = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const options = useRef<Array<HTMLButtonElement | null>>([]);
+  /** 首字母连打的缓冲，跟原生 select 一样，停顿一下就重新开始。 */
+  const typed = useRef({ text: "", at: 0 });
+
+  const index = Math.max(0, LANGS.findIndex((entry) => entry.code === lang));
+  const current = LANGS[index];
+
+  function close(focusTrigger: boolean) {
+    setOpen(false);
+    // 关掉之后焦点必须回到按钮上。不回的话它跟着被卸载的选项一起消失，
+    // 键盘用户被扔回文档顶部，每切一次语言就要重新 Tab 一遍整页。
+    if (focusTrigger) trigger.current?.focus();
+  }
+
+  function choose(next: number) {
+    setLang(LANGS[next]!.code);
+    close(true);
+  }
+
+  // 点外面关掉。用 pointerdown 不用 mousedown：iOS Safari 点在非可点击元素上
+  // 不会合成 mouse 事件，用 mousedown 的话在手机上点空白处关不掉菜单。
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: PointerEvent) => {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [open]);
+
+  // 焦点跟着 active 走。菜单一开就落在当前语言那一项上，方向键再挪。
+  useEffect(() => {
+    if (open) options.current[active]?.focus();
+  }, [open, active]);
+
+  function onMenuKey(event: KeyboardEvent<HTMLUListElement>) {
+    const last = LANGS.length - 1;
+    const go = (to: number) => {
+      event.preventDefault();
+      setActive(Math.min(last, Math.max(0, to)));
+    };
+    if (event.key === "ArrowDown") return go(active === last ? 0 : active + 1);
+    if (event.key === "ArrowUp") return go(active === 0 ? last : active - 1);
+    if (event.key === "Home") return go(0);
+    if (event.key === "End") return go(last);
+    if (event.key === "Escape") { event.preventDefault(); return close(true); }
+    if (event.key === "Tab") return setOpen(false);   // Tab 走人就关掉，别留个孤菜单
+    // 首字母连打。原生 select 有这个，拆掉了就得补。
+    if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const now = Date.now();
+      typed.current.text = now - typed.current.at > 800 ? event.key : typed.current.text + event.key;
+      typed.current.at = now;
+      const want = typed.current.text.toLowerCase();
+      let hit = LANGS.findIndex((entry) => entry.native.toLowerCase().startsWith(want));
+      // 连打没匹配上就拿最后一个字母重新起头。English 和 Español 都是 E 开头，
+      // 所以缓冲区有用；但接着打 "d" 再打 "p" 是想去 Português，不是想找
+      // "dp" 开头的语言，卡住不动会让人以为键盘失灵。
+      if (hit < 0 && want.length > 1) {
+        typed.current.text = event.key;
+        const one = event.key.toLowerCase();
+        hit = LANGS.findIndex((entry) => entry.native.toLowerCase().startsWith(one));
+      }
+      if (hit >= 0) go(hit);
+    }
+  }
+
   return (
-    <button
-      type="button"
-      className="lang-toggle"
-      onClick={() => setLang(next)}
-      title={lang === "zh" ? "Switch to English" : "切换到中文"}
-      aria-label={lang === "zh" ? "Switch to English" : "切换到中文"}
+    <div
+      className="lang-toggle-box"
+      ref={box}
+      onBlur={(event) => {
+        // 焦点跑到这个部件外面就关掉。不关的话 Tab 出去之后菜单还开着，
+        // 一个没人管的浮层挂在那儿。
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+      }}
     >
-      <Languages size={15} />
-      <span>{lang === "zh" ? "EN" : "中"}</span>
-    </button>
+      <button
+        type="button"
+        ref={trigger}
+        className="lang-toggle"
+        // 名字里要带上当前语言。只写"切换界面语言"的话，屏幕阅读器把可见文字
+        // 盖掉了，用户听不到现在是哪一种（WCAG 2.5.3 也要求可访问名包含可见标签）。
+        aria-label={`${t("切换界面语言")}: ${current?.native ?? "English"}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls="lang-menu"
+        onClick={() => {
+          setActive(index);
+          setOpen((was) => !was);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setActive(index);
+            setOpen(true);
+          }
+        }}
+      >
+        <Languages size={15} aria-hidden="true" />
+        <span className="lang-toggle-current">{current?.native ?? "English"}</span>
+        <ChevronDown size={13} aria-hidden="true" className="lang-toggle-caret" />
+      </button>
+
+      {open ? (
+        <ul
+          id="lang-menu"
+          className="lang-menu"
+          role="listbox"
+          aria-label={t("切换界面语言")}
+          onKeyDown={onMenuKey}
+        >
+          {LANGS.map((entry, i) => (
+            // role="presentation" 不能省。<ul> 一旦被 role="listbox" 顶掉隐式的
+            // list 角色，里面的 <li> 就不再是 listitem，浏览器会连带把它内部的
+            // option 角色一起作废——实测无障碍树里十个全变成 button，
+            // aria-selected 整个丢掉，等于一个不含任何选项的 listbox。
+            <li key={entry.code} role="presentation">
+              <button
+                type="button"
+                ref={(node) => { options.current[i] = node; }}
+                role="option"
+                aria-selected={entry.code === lang}
+                tabIndex={i === active ? 0 : -1}
+                lang={entry.html}
+                className={entry.code === lang ? "is-current" : undefined}
+                onClick={() => choose(i)}
+                onFocus={() => setActive(i)}
+              >
+                <span>{entry.native}</span>
+                {entry.code === lang ? <Check size={13} aria-hidden="true" /> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 

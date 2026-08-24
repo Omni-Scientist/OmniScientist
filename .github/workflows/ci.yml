@@ -81,8 +81,10 @@ jobs:
         run: bun run build:assets
       - working-directory: desktop
         run: bun run typecheck        # 浏览器侧和 Bun 侧两份 tsconfig 都要过
+      # 目录要一个个数出来。写 `bun test` 会把 node_modules 里的也扫进去，
+      # 写 `bun test gateway` 又会让 launcher/ 下的测试白写、没人跑。
       - working-directory: desktop
-        run: bun test gateway
+        run: bun test gateway launcher
 
       # e2e 以前不在 CI 里跑，于是它整套死了 0 passed 都没人知道：界面默认语言
       # 换成英文之后，7 个用例的中文定位符全部失配，而那跟被测行为毫无关系。

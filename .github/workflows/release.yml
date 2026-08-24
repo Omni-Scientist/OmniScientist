@@ -231,23 +231,45 @@ jobs:
 
       # Windows 桌面包是 desktop-windows.yml 单独挂上去的，这个 job 的 staging 里没有它，
       # 所以它的校验和进不了上面那份 SHA256SUMS。那条工作流一分钟就编完，跑到这一步通常
-      # 已经挂好了；真没赶上就少一行，只提醒，不拦着发。
+      # 已经挂好了。
+      #
+      # 以前没赶上就只提醒、照发。现在不行了：桌面版的"下载新版本"按钮会核对
+      # SHA256SUMS，表里没有这一行就直接拒绝下载（这是设计，不校验的包不给用户），
+      # 于是这一行缺席等于所有 Windows 用户的更新按钮当场失效。打了 tag 的正式发布
+      # 要等它，等不到就让这一步失败，别发一个更新按钮是坏的版本出去。
       - name: 把 Windows 桌面包的校验和并进来
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.value) }}"
-          if gh release download "$tag" --pattern 'OmniScientist-*-windows-x64.zip' --dir win 2>/dev/null; then
-            ( cd win && sha256sum -- *.zip >> ../release/SHA256SUMS )
-            sort -k2 -o release/SHA256SUMS release/SHA256SUMS
-            rm -rf win
-            echo "Windows 包的校验和已并入 SHA256SUMS"
-          else
-            echo "::warning::Windows 桌面包还没挂上来，SHA256SUMS 里不含它"
+          for attempt in $(seq 1 20); do
+            if gh release download "$tag" --pattern 'OmniScientist-*-windows-x64.zip' --dir win 2>/dev/null; then
+              ( cd win && sha256sum -- *.zip >> ../release/SHA256SUMS )
+              sort -k2 -o release/SHA256SUMS release/SHA256SUMS
+              rm -rf win
+              echo "Windows 包的校验和已并入 SHA256SUMS"
+              exit 0
+            fi
+            echo "Windows 桌面包还没挂上来，第 $attempt 次等待"
+            sleep 30
+          done
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "::error::等了 10 分钟 Windows 桌面包还没挂上来。发出去的话 Windows 用户的更新按钮会因为校验和缺失而失效。"
+            exit 1
           fi
+          echo "::warning::Windows 桌面包还没挂上来，SHA256SUMS 里不含它（非 tag 构建，不拦）"
 
+      # desktop-windows.yml 一分钟就编完，它发现 release 不存在会先建一个草稿占位。
+      # 这个 action 默认**不覆盖**已存在的正文，于是那个占位说明就留下来了，
+      # 发布页上什么都没有——v0.1.2 就是这么空的，v0.1.1 有说明纯粹是那次
+      # release.yml 先跑到，是运气不是设计。
+      #
+      # 真正的修法在 desktop-windows.yml 那边：占位改用 --generate-notes，
+      # 就算这边没跑到，发布页也不会是白的。这里的 append_body: false 是显式
+      # 写出默认值，只为让"正文以下面这份为准"这件事在代码里看得见。
       - uses: softprops/action-gh-release@v2
         with:
+          append_body: false
           name: OmniScientist ${{ needs.version.outputs.value }}
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.value) }}
           draft: false

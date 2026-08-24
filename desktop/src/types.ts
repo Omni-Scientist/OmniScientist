@@ -126,3 +126,18 @@ export interface ResearchTransport {
   /** 停掉正在跑的那一轮。已经产出的东西保留，再发消息就接着做。 */
   stopRun(sessionId: string): Promise<void>;
 }
+
+/**
+ * 下载新版本的进度。浏览器和 Bun 两边共用这一份定义。
+ *
+ * 抄两份的下场很具体：某天服务端给 error 加了个字段，界面这份没跟上，
+ * TypeScript 一声不吭（结构类型兼容），到运行时才发现界面读不到那个字段。
+ *
+ * message 是拼好的中文原文，日志用；key + args 是可翻译的那份，key 就是
+ * locales 里的词条键。底层 fetch 抛出来的错（超时、断网）只有 message。
+ */
+export type DownloadState =
+  | { state: "idle" }
+  | { state: "downloading"; name: string; version: string; received: number; total: number }
+  | { state: "done"; name: string; version: string; path: string; total: number }
+  | { state: "error"; message: string; key?: string; args?: Array<string | number> };

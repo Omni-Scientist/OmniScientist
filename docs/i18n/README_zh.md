@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/title-dark.png">
-  <img src="assets/title.png" width="560" alt="OmniScientist">
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/title-dark.png">
+  <img src="../../assets/title.png" width="560" alt="OmniScientist">
 </picture>
 <br/>
 
@@ -11,9 +11,9 @@
 <p align="center">
 <a href="https://github.com/Omni-Scientist/OmniScientist/releases/latest"><img src="https://img.shields.io/github/v/release/Omni-Scientist/OmniScientist?style=flat-square&label=release&color=black&logo=github" alt="Release"/></a>
 <a href="https://github.com/Omni-Scientist/OmniScientist/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Omni-Scientist/OmniScientist/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"/></a>
-<a href="docs/INSTALL.md"><img src="https://img.shields.io/badge/docs-install%20%26%20usage-blue?style=flat-square&logo=readthedocs&logoColor=white" alt="Docs"/></a>
+<a href="../INSTALL.md"><img src="https://img.shields.io/badge/docs-install%20%26%20usage-blue?style=flat-square&logo=readthedocs&logoColor=white" alt="Docs"/></a>
 <a href="https://omni-scientist.github.io/"><img src="https://img.shields.io/badge/website-omni--scientist.github.io-informational?style=flat-square&logo=googlechrome&logoColor=white" alt="Website"/></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/></a>
+<a href="../../LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/></a>
 </p>
 
 <p align="center">
@@ -25,20 +25,32 @@
 </p>
 
 <p align="center">
-<a href="README.md">English</a> · <strong>简体中文</strong>
+<a href="../../README.md">English</a> · <strong>简体中文</strong> · <a href="README_fr.md">Français</a> · <a href="README_es.md">Español</a> · <a href="README_zh-Hant.md">繁體中文</a> · <a href="README_ja.md">日本語</a> · <a href="README_ko.md">한국어</a> · <a href="README_pt.md">Português</a> · <a href="README_de.md">Deutsch</a> · <a href="README_ru.md">Русский</a>
 </p>
 
 </div>
 
-<img src="assets/shot-paper.jpg" width="100%" alt="研究记录里编译好的论文，高亮的数字各自连着产生它的那次运行">
+---
+
+## 动态
+
+- **2026-08-24** · **多语言支持。** 工作台界面和本页面都有多种语言，页面顶部可切换，软件里在工具栏切换。
+- **2026-08-23** · **接入 DeepSeek 多模态。** `deepseek-v4-flash-vision-exp` 加入感知侧车，一个 DeepSeek key 同时管推理和看图。*(v0.1.2)*
+- **2026-08-18** · **首个补丁版本。** release 产物统一到一个 `SHA256SUMS`，安装脚本装之前会核对。*(v0.1.1)*
+- **2026-08-16** · **首次公开发布。** 桌面版、终端版和 Claude Code skill，同一套代码。*(v0.1.0)*
+- **2026-08-13** · **技术报告。** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558)，覆盖十二种模态的真实运行。
+
+---
+
+<img src="../../assets/shot-paper.jpg" width="100%" alt="研究记录里编译好的论文，高亮的数字各自连着产生它的那次运行">
 
 编译好的论文和实验轨迹并排，高亮的数字各自指回产生它的那次运行。
 
-<img src="assets/shot-mol.jpg" width="100%" alt="由化学案例 SMILES 算出的球棍模型三维构象，落在研究记录里">
+<img src="../../assets/shot-mol.jpg" width="100%" alt="由化学案例 SMILES 算出的球棍模型三维构象，落在研究记录里">
 
 由化学案例自带 SMILES 算出的三维构象，运行中途落进研究记录。
 
-<img src="assets/shot-ct.jpg" width="100%" alt="以点云读出的 64³ CT 体数据，落在研究记录里">
+<img src="../../assets/shot-ct.jpg" width="100%" alt="以点云读出的 64³ CT 体数据，落在研究记录里">
 
 影像案例的 64³ CT 体数据，以点云读出，旁边是产生它的工具调用。
 
@@ -76,6 +88,8 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 
 工作台是一个本地网页。上面截图里地址栏的 `127.0.0.1` 就是全部部署。窄屏下自动收成单栏。关闭标签页 30 秒后才停止本轮运行，刷新页面不受影响。
 
+界面语言首次启动时跟随浏览器，之后在工具栏切换，有简体中文、繁體中文、English、Français、Español、日本語、한국어、Português、Deutsch、Русский 十种。
+
 ## 溯源
 
 稿件中的每个数字都带有回链，指向产生它的那次运行。
@@ -100,7 +114,7 @@ ANTHROPIC_API_KEY=...
 | 桌面版、终端版 | `deepseek-v4-flash`，也可用 `OMNISCI_BASE_URL` / `OMNISCI_API_KEY` / `OMNISCI_MODEL` 指向任意 OpenAI 兼容接口 | 默认 `claude-sonnet-5`，`deepseek-v4-flash-vision-exp` 用同一个 DeepSeek key，`OMNISCI_VISION_PROVIDER` / `OMNISCI_VISION_MODEL` 更换 |
 | engine | 任意，由 `OMNIST_MODEL` 决定，支持 OpenAI、Anthropic、OpenRouter、本地 vLLM 或 sglang，以及自建网关 | `OMNIST_PERCEIVER` |
 
-桌面版在设置面板中配置这两个模型。一套配置需要真实发出一次请求并得到回应才能保存。传输方式由模型名决定，地址和 key 由使用者提供。完整对照表见 [`docs/USAGE.md`](docs/USAGE.md)。
+桌面版在设置面板中配置这两个模型。一套配置需要真实发出一次请求并得到回应才能保存。传输方式由模型名决定，地址和 key 由使用者提供。完整对照表见 [`docs/USAGE.md`](../USAGE.md)。
 
 对外请求共三类。第一类是你自己的模型接口。第二类是每天一次的版本检查，目标是 GitHub，`OMNISCI_UPDATE_CHECK=off` 可以关闭。第三类发生在桌面版安装依赖时，目标是 PyPI 和 tectonic 的发布页。
 
@@ -129,7 +143,7 @@ python3 scripts/check_parity.py      # engine、两份 skill 和桌面版是否�
 python3 skill/build.py               # skill 是否仍然自包含
 
 cd cli      && bun run typecheck && bun test
-cd desktop  && bun run build:assets && bun run typecheck && bun test gateway && bun run test:e2e
+cd desktop  && bun run build:assets && bun run typecheck && bun test gateway launcher && bun run test:e2e
 ```
 
 每次 push，CI 跑完上述全部检查，并对编译出的启动器做一次真实冒烟测试。打 `v*` 标签会构建并发布 release 产物。
@@ -156,11 +170,11 @@ OmniScientist/
 └── install.ps1        Windows 上的同一件事
 ```
 
-两份 skill 的差异、生成文件的处理方式，以及分平台构建的原因，见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
+两份 skill 的差异、生成文件的处理方式，以及分平台构建的原因，见 [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md)。
 
 ## 状态
 
-早期版本，当前 `0.1.1`。接口仍在调整，版本之间可能变化。
+早期版本，当前 `0.1.2`。接口仍在调整，版本之间可能变化。
 
 | 平台 | 终端版 | 桌面版 |
 |---|---|---|
@@ -175,7 +189,7 @@ release 中所有产物的校验和集中在一个 `SHA256SUMS` 里，`install.s
 
 ## 样例论文
 
-[`papers/`](papers/) 收录五篇论文，均由单次运行写成，并附评审打分。
+[`papers/`](../../papers/) 收录五篇论文，均由单次运行写成，并附评审打分。
 
 一个实际例子是 STEAD 中标记为 noise 的地震记录。系统读取三分量波形，在这批记录里找出相干到时，再用自行生成的替代零分布做检验。
 
@@ -188,11 +202,11 @@ python engine/omniscientist/agentic.py --task stead_seismic --stage run
 
 `engine/` 是技术报告描述的参考实现，用于脚本化和可复现的运行。`OMNIST_MODEL` 决定主干模型，传输方式随模型名自动确定，地址和 key 由使用者提供。
 
-产出的论文是 [Coherent polarized signals in a substantial fraction of noise-labeled STEAD traces](papers/seismology_stead_noise.pdf)，结论是在 1% 虚警率下，抽样的 noise 记录中有 21.7% 携带真实信号。
+产出的论文是 [Coherent polarized signals in a substantial fraction of noise-labeled STEAD traces](../../papers/seismology_stead_noise.pdf)，结论是在 1% 虚警率下，抽样的 noise 记录中有 21.7% 携带真实信号。
 
 ## 参与
 
-欢迎提交 issue 和 PR。来自 Windows 和 Intel Mac 的运行反馈尤其有用。提交 PR 前请跑一遍[测试](#测试)一节列出的检查，CI 使用同一套。新增一个学科只需在 `engine/examples/` 下写一个 `series.json`，写法见 [`docs/USAGE.md`](docs/USAGE.md)。
+欢迎提交 issue 和 PR。来自 Windows 和 Intel Mac 的运行反馈尤其有用。提交 PR 前请跑一遍[测试](#测试)一节列出的检查，CI 使用同一套。新增一个学科只需在 `engine/examples/` 下写一个 `series.json`，写法见 [`docs/USAGE.md`](../USAGE.md)。
 
 ## 引用
 
@@ -207,8 +221,8 @@ python engine/omniscientist/agentic.py --task stead_seismic --stage run
 }
 ```
 
-带作者和单位的版本见 [`README_paper.md`](README_paper.md)。
+带作者和单位的版本见 [`README_paper.md`](../README_paper.md)。
 
 ## 许可
 
-[MIT](LICENSE)。
+[MIT](../../LICENSE)。
