@@ -12,8 +12,8 @@ import {
   type Presenter,
 } from "../src/loop.ts";
 import {
-  DEFAULT_EFFORT, EFFORT_LEVELS, PROVIDERS, quirks, REASONING_HEADROOM,
-  supportsEffort, tokenCapField, type ModelClient,
+  DEFAULT_EFFORT, EFFORT_LEVELS, ModelClient, PROVIDERS, quirks, REASONING_HEADROOM,
+  supportsEffort, tokenCapField,
 } from "../src/model.ts";
 import { BUILTIN_SKILLS_DIR, loadSkills, makeUseSkillTool } from "../src/skills.ts";
 import { defaultRegistry, makeContext, Registry, type Tool } from "../src/tools/index.ts";
@@ -405,6 +405,42 @@ describe("desktop/CLI 配置一致", () => {
       .toEqual({ provider: "openai", model: "gpt-5.6-terra" });
     // 认不出来的通道名不能把 CLI 打挂，退回默认。
     expect(pick({ OMNISCI_PROVIDER: "nonesuch" })).toEqual({ provider: "deepseek", model: "deepseek-v4-flash" });
+  });
+});
+
+describe("换掉配置之后已有的会话跟着走", () => {
+  // 用户在设置里换掉一个欠费的 key，回旧对话接着跑，撞的还是旧 key，只有新建会话
+  // 才好使——这是 2026-08-24 真机上踩的。会话里的 client 是被工具和主循环各攥一份
+  // 引用的，所以只能原地改，reconfigure 就是干这个的。
+  test("原地换掉通道和模型，攥着同一个引用的地方也跟着变", () => {
+    const client = new ModelClient({
+      provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-old-key-1234",
+    });
+    // 会话里的工具就是这么存的：一个引用，不是配置的副本。
+    const heldByTool = client;
+
+    client.reconfigure({ provider: "openai", model: "gpt-5.6-terra", apiKey: "sk-new-key-5678" });
+
+    expect(heldByTool.provider).toBe("openai");
+    expect(heldByTool.model).toBe("gpt-5.6-terra");
+  });
+
+  test("底下那个 OpenAI 客户端真的换了 key 和地址", () => {
+    // 光看 provider/model 换了不够：402 是 key 发出去才报的。这两个字段藏在私有的
+    // OpenAI 实例里，只能伸手进去看，否则这条修复没有任何东西真正验证到。
+    const inner = (c: ModelClient) => (c as unknown as { client: { apiKey: string; baseURL: string } }).client;
+
+    const client = new ModelClient({
+      provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-old-key-1234",
+    });
+    expect(inner(client).apiKey).toBe("sk-old-key-1234");
+
+    client.reconfigure({
+      provider: "deepseek", model: "deepseek-v4-flash", apiKey: "sk-new-key-5678",
+      baseURL: "https://example.invalid/v1",
+    });
+    expect(inner(client).apiKey).toBe("sk-new-key-5678");
+    expect(inner(client).baseURL).toBe("https://example.invalid/v1");
   });
 });
 

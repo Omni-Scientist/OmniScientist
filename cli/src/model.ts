@@ -213,24 +213,44 @@ export async function fetchBalance(provider: ProviderName): Promise<string | nul
   }
 }
 
+export interface ModelClientOptions {
+  provider?: ProviderName;
+  model?: string;
+  apiKey?: string;
+  /** 覆盖通道的默认地址。桌面版要让用户在界面上改自定义端点，
+   *  而 PROVIDERS.custom.baseURL 是模块加载时从环境变量读死的。 */
+  baseURL?: string;
+  maxTokens?: number;
+  /** 推理档位，只对 OpenAI 推理模型有效，见 EFFORT_LEVELS。 */
+  effort?: string;
+}
+
 export class ModelClient {
-  readonly provider: ProviderName;
-  readonly model: string;
-  private client: OpenAI;
-  private maxTokens: number;
+  /** 只由构造函数和 reconfigure() 写，外面当只读的看。 */
+  provider!: ProviderName;
+  model!: string;
+  private client!: OpenAI;
+  private maxTokens!: number;
   private effort?: string;
 
-  constructor(opts: {
-    provider?: ProviderName;
-    model?: string;
-    apiKey?: string;
-    /** 覆盖通道的默认地址。桌面版要让用户在界面上改自定义端点，
-     *  而 PROVIDERS.custom.baseURL 是模块加载时从环境变量读死的。 */
-    baseURL?: string;
-    maxTokens?: number;
-    /** 推理档位，只对 OpenAI 推理模型有效，见 EFFORT_LEVELS。 */
-    effort?: string;
-  } = {}) {
+  constructor(opts: ModelClientOptions = {}) {
+    this.apply(opts);
+  }
+
+  /**
+   * 原地换掉通道、模型和凭据，整份配置照 opts 重来一遍（没给的字段回到默认，
+   * 跟 new 一个是一样的语义）。
+   *
+   * 为什么不能 new 一个新的顶上：会话建起来的那一刻，这个 client 的引用已经被
+   * registry 里的 explore 工具和 AgentLoop 各存了一份。换掉外面那个变量，那些
+   * 副本还攥着旧的，于是主循环用新 key、探索工具用旧 key。原地改是唯一一次能
+   * 改全的做法。
+   */
+  reconfigure(opts: ModelClientOptions): void {
+    this.apply(opts);
+  }
+
+  private apply(opts: ModelClientOptions): void {
     const provider = opts.provider ?? DEFAULT_PROVIDER;
     const conf = PROVIDERS[provider];
     if (!conf) throw new Error(`不认识的通道 ${provider}，可选: ${Object.keys(PROVIDERS).join(", ")}`);

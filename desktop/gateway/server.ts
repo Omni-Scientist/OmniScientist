@@ -19,7 +19,7 @@ import { ensureManagedToolsOnPath } from "../../cli/src/interpreters.ts";
 import { gatherSignals } from "../../cli/src/triggers.ts";
 import { discoverArtifacts, type ArtifactFile } from "./artifacts.ts";
 import { runOutcome } from "./run-outcome.ts";
-import { currentModelConfig, currentVisionConfig } from "./model-config.ts";
+import { currentModelConfig, currentVisionConfig, type ModelConfig } from "./model-config.ts";
 import { WebSessionStore } from "./session-store.ts";
 import { hydrateToolOutputs, sanitizeToolOutput } from "./tool-output.ts";
 import type {
@@ -40,7 +40,8 @@ const TOKEN = process.env.OMNISCI_WEB_TOKEN;
 const WORKSPACE_ROOT = resolve(process.env.OMNISCI_WORKSPACE_ROOT ?? process.cwd());
 /**
  * 桌面版的通道和模型由用户在界面上配，存在 model-config 里，所以这里不能写死。
- * 一个会话建起来之后用的是它自己那个 ModelClient，改配置不影响已经在跑的会话。
+ * 每个会话有自己那个 ModelClient，但它不是建会话那一刻的快照：每轮开跑前会
+ * 跟当前设置对一次，见 syncRuntimeModel()。
  */
 function defaultModelName(): string {
   return currentModelConfig()?.model ?? "未配置";
@@ -86,6 +87,8 @@ interface WebRuntime {
   updatedAtIso: string;
   status: "running" | "complete" | "idle";
   model: ModelClient;
+  /** model 现在装着哪套配置，见 syncRuntimeModel()。 */
+  modelMark: string;
   registry: Registry;
   session: Session;
   standards: StandardsEngine;
@@ -263,6 +266,41 @@ function persistRuntimeSoon(runtime: WebRuntime): void {
   runtime.persistTimer = setTimeout(() => persistRuntime(runtime), 180);
 }
 
+/** 一套模型配置的指纹，用来判断"跟上次是不是同一套"。key 只参与比较，不外泄。 */
+function configMark(config: ModelConfig): string {
+  return [config.provider, config.model, config.baseUrl, config.effort ?? "", config.apiKey].join("\u0000");
+}
+
+function clientOptionsOf(config: ModelConfig) {
+  return {
+    provider: config.provider,
+    model: config.model,
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
+    ...(config.effort ? { effort: config.effort } : {}),
+  };
+}
+
+/**
+ * 把会话手里那个 ModelClient 拉回当前设置。
+ *
+ * 会话建起来时装的是那一刻的通道、模型和 key。以前就一直用它了，于是用户在设置里
+ * 换掉一个欠费的 key、点回旧对话接着跑，撞的还是旧 key：界面上「测试通过」，
+ * 一发消息照样 402，只有新建会话才好。实测踩过（2026-08-24）。
+ *
+ * 所以每轮开跑前对一次。没配好（key 被删空）就不动，让后面该报错的地方去报，
+ * 别在这儿把一个还能用的会话改坏。
+ */
+function syncRuntimeModel(runtime: WebRuntime): void {
+  const configured = currentModelConfig();
+  if (!configured) return;
+  const mark = configMark(configured);
+  if (mark === runtime.modelMark) return;
+  runtime.model.reconfigure(clientOptionsOf(configured));
+  runtime.modelMark = mark;
+  console.log(`[omnisci] 会话 ${runtime.id} 换用 ${configured.provider} / ${configured.model}`);
+}
+
 async function createRuntime(preferredId?: string): Promise<WebRuntime> {
   if (preferredId && runtimes.has(preferredId)) return runtimes.get(preferredId)!;
 
@@ -270,13 +308,7 @@ async function createRuntime(preferredId?: string): Promise<WebRuntime> {
   if (!configured) {
     throw new Error("还没有配置模型 API key。点左下角的设置填一个，再开始研究。");
   }
-  const model = new ModelClient({
-    provider: configured.provider,
-    model: configured.model,
-    apiKey: configured.apiKey,
-    baseURL: configured.baseUrl,
-    ...(configured.effort ? { effort: configured.effort } : {}),
-  });
+  const model = new ModelClient(clientOptionsOf(configured));
   const requestedInternalId = preferredId?.startsWith("local-")
     ? preferredId.slice("local-".length)
     : undefined;
@@ -331,6 +363,7 @@ async function createRuntime(preferredId?: string): Promise<WebRuntime> {
     updatedAtIso: stored?.updatedAt ?? new Date().toISOString(),
     status: restoredStatus ?? "idle",
     model,
+    modelMark: configMark(configured),
     registry,
     session,
     standards,
@@ -516,6 +549,8 @@ async function runMessage(runtime: WebRuntime, userText: string, emit: Emit): Pr
   // （安装文档就是这么写的），只在启动时算一次的话，装了也用不上，
   // 一轮跑完停在 .tex 不出 PDF。
   ensureManagedToolsOnPath();
+  // 同理，设置里换掉的 key 和模型也要在这里认一次，否则旧会话永远用建会话那天的。
+  syncRuntimeModel(runtime);
   const messageId = `assistant-${crypto.randomUUID()}`;
   const userMessage: ChatMessage = {
     id: `user-${crypto.randomUUID()}`,
