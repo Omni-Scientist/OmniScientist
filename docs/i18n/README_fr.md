@@ -32,6 +32,8 @@
 
 ---
 
+https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
+
 ## Actualités
 
 - **2026-08-24** · **Prise en charge multilingue.** L’interface de l’espace de travail et cette page sont disponibles en plusieurs langues, listées en haut de cette page et sélectionnables depuis la barre d’outils de l’application. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*

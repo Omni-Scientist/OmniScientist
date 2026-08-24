@@ -32,6 +32,8 @@
 
 ---
 
+https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
+
 ## 动态
 
 - **2026-08-24** · **多语言支持。** 工作台界面和本页面都有多种语言，页面顶部可切换，软件里在工具栏切换。*([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*

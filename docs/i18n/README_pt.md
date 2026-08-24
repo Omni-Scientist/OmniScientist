@@ -32,6 +32,8 @@
 
 ---
 
+https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
+
 ## Notícias
 
 - **2026-08-24** · **Suporte multilíngue.** A interface do workspace e esta página estão disponíveis em vários idiomas, listados no topo desta página e alternados pela barra de ferramentas no aplicativo. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*

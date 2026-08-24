@@ -32,6 +32,8 @@
 
 ---
 
+https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
+
 ## News
 
 - **2026-08-24** · **多言語対応。** ワークスペースのインターフェースとこのページはともに多言語で利用でき、このページの上部に一覧表示され、アプリのツールバーから切り替えられます。 *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*

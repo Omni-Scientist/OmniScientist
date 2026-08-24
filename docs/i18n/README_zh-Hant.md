@@ -32,6 +32,8 @@
 
 ---
 
+https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
+
 ## 新聞
 
 - **2026-08-24** · **多語言支援。** 工作區介面與本頁皆提供多種語言版本，列於本頁頂端，並可從應用程式中的工具列切換。 *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*

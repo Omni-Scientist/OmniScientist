@@ -32,6 +32,8 @@
 
 ---
 
+https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
+
 ## Noticias
 
 - **2026-08-24** · **Compatibilidad multiidioma.** La interfaz del espacio de trabajo y esta página están disponibles en varios idiomas, que se listan arriba y se cambian desde la barra de herramientas de la aplicación. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
