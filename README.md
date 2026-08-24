@@ -32,6 +32,10 @@
 
 ---
 
+<video controls playsinline preload="metadata" width="100%" poster="assets/shot-paper.jpg">
+  <source src="https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/assets/omni_v2.mp4" type="video/mp4">
+</video>
+
 ## News
 
 - **2026-08-24** · **Multi-language support.** The workspace interface and this page are both available in multiple languages, listed at the top of this page and switched from the toolbar in the app. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
