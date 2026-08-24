@@ -261,6 +261,29 @@ def _throttle(model):
     _last_call_ts[model] = time.time()
 
 
+# 模型名前缀（"local/"、"or/"）只是 client_for() 的选路标记，服务端一概不认：
+# OpenRouter 要 bare vendor/id，Ollama / vLLM / sglang 只认裸模型名，带前缀会 404 model not found。
+# 路由和剥离共用下面这张表，加新后端只改一处，不会出现"路由认得、剥离忘了"的偏差；
+# 用 removeprefix 而不是写死切片长度，省得数错一位悄悄发出半截模型名。
+_ROUTE_PREFIX = (("or/", lambda: _openrouter_client), ("local/", lambda: _local_client))
+
+
+def _bare_model(model, cl):
+    """把路由前缀剥掉。只在该前缀确实把请求路由到了对应客户端时才剥，避免误伤同名模型。"""
+    name = str(model)
+    for prefix, owner in _ROUTE_PREFIX:
+        if cl is owner() and name.startswith(prefix):
+            bare = name.removeprefix(prefix)
+            if not bare:
+                # 只写了前缀没写模型名。不拦的话会把空串发出去，服务端回一句
+                # "model '' not found"，没人能从那句话猜到是自己少填了模型名。
+                raise RuntimeError(
+                    "model %r only has the %r routing prefix and no model name after it; "
+                    "write it as %s<model>, e.g. %sqwen3:8b" % (model, prefix, prefix, prefix))
+            return bare
+    return model
+
+
 def create(model, messages, max_tokens=700, temperature=0.0, seed=None, tools=None, tool_choice="auto", cache=False):
     """One entry point for chat/tool calls. For the multi-step agent loop (cache=True) on a 5-gen Claude model we
     use the NATIVE Anthropic SDK with PROMPT CACHING (the OpenAI-compat endpoint cannot cache); the stable prefix
@@ -277,7 +300,7 @@ def create(model, messages, max_tokens=700, temperature=0.0, seed=None, tools=No
             kw["tool_choice"] = {"type": "auto"}
         return _from_anthropic(_anthropic_native.messages.create(**kw))
     cl = client_for(model)
-    send_model = model[3:] if (cl is _openrouter_client and str(model).startswith("or/")) else model  # OpenRouter wants the bare vendor/id
+    send_model = _bare_model(model, cl)
     kw = {"model": send_model, "messages": messages}
     if cl is _openai_client:                            # OpenAI's newer models (gpt-5.x / o-series) use max_completion_tokens
         if str(model).startswith("gpt-5.6"):
@@ -372,7 +395,10 @@ def chat(content, model, max_tokens=700, temperature=0.0, seed=0, label=""):
                     if ptd is not None:
                         m["cread"] += getattr(ptd, "cached_tokens", 0) or 0
                 m["calls"] += 1; m["mm_calls"] += int(is_mm)
-            resp = r.choices[0].message.content or ""
+            # 推理型模型（deepseek-v4-*、GLM 等）在思考预算吃满时会把答案放进 reasoning_content，
+            # content 返回空串。只读 content 的话拿到的是空回复，agent loop 会静默空转重试。
+            _msg = r.choices[0].message
+            resp = _msg.content or getattr(_msg, "reasoning_content", None) or ""
             print("  [chat] %-24s in=%5dc out=%5dc  cap=%d tok" % ((label or "-")[:24], _inlen, len(resp), max_tokens))
             return resp
         except Exception as e:
