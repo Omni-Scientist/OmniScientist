@@ -32,11 +32,7 @@
 
 ---
 
-
-
-https://github.com/user-attachments/assets/15fc5101-a7bc-41fb-93ff-17eeba0e37fb
-
-
+https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## News
 
