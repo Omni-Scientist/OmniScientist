@@ -34,10 +34,10 @@
 
 ## 新聞
 
-- **2026-08-24** · **多語言支援。** 工作區介面與本頁皆提供多種語言版本，列於本頁頂端，並可從應用程式中的工具列切換。 *(v0.1.3)*
-- **2026-08-23** · **DeepSeek 多模態支援。** `deepseek-v4-flash-vision-exp` 加入感知 sidecar，因此一個 DeepSeek 金鑰現在即可涵蓋推理與視覺。 *(v0.1.2)*
-- **2026-08-18** · **首次修補版本。** 發行資產帶有單一 `SHA256SUMS`，安裝程式會於安裝前加以驗證。 *(v0.1.1)*
-- **2026-08-16** · **首次公開發行。** 從單一程式碼庫提供桌面應用程式、終端機代理程式，以及 Claude Code 技能。 *(v0.1.0)*
+- **2026-08-24** · **多語言支援。** 工作區介面與本頁皆提供多種語言版本，列於本頁頂端，並可從應用程式中的工具列切換。 *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
+- **2026-08-23** · **DeepSeek 多模態支援。** `deepseek-v4-flash-vision-exp` 加入感知 sidecar，因此一個 DeepSeek 金鑰現在即可涵蓋推理與視覺。 *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
+- **2026-08-18** · **首次修補版本。** 發行資產帶有單一 `SHA256SUMS`，安裝程式會於安裝前加以驗證。 *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
+- **2026-08-16** · **首次公開發行。** 從單一程式碼庫提供桌面應用程式、終端機代理程式，以及 Claude Code 技能。 *([v0.1.0](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.0))*
 - **2026-08-13** · **技術報告。** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558)，涵蓋十二種模態的運行。
 
 ---

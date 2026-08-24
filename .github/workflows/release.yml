@@ -259,14 +259,13 @@ jobs:
           fi
           echo "::warning::Windows 桌面包还没挂上来，SHA256SUMS 里不含它（非 tag 构建，不拦）"
 
-      # desktop-windows.yml 一分钟就编完，它发现 release 不存在会先建一个草稿占位。
-      # 这个 action 默认**不覆盖**已存在的正文，于是那个占位说明就留下来了，
-      # 发布页上什么都没有——v0.1.2 就是这么空的，v0.1.1 有说明纯粹是那次
-      # release.yml 先跑到，是运气不是设计。
+      # desktop-windows.yml 一分钟就编完，它发现 release 不存在会先建一个草稿占位，
+      # 正文是 --generate-notes 出的那一行 changelog。而这个 action 对**已存在**的
+      # release 不会用 body 去盖掉已有正文，于是占位那行就成了最终正文，发布页上
+      # 除了一行 changelog 什么都没有。v0.1.3 就是这么空的，当场手工补的。
       #
-      # 真正的修法在 desktop-windows.yml 那边：占位改用 --generate-notes，
-      # 就算这边没跑到，发布页也不会是白的。这里的 append_body: false 是显式
-      # 写出默认值，只为让"正文以下面这份为准"这件事在代码里看得见。
+      # 所以正文不再指望这个 action：它只管传产物，正文由下面那步用 gh CLI 强制写。
+      # body_path 仍然给着，是为了 release 由这边首创（不经过占位）时也对。
       - uses: softprops/action-gh-release@v2
         with:
           append_body: false
@@ -275,25 +274,26 @@ jobs:
           draft: false
           generate_release_notes: true
           files: release/*
-          body: |
-            ## Install
+          body_path: .github/release-notes.md
 
-            Paste this into Claude Code, Cursor, Codex, or anything else with a shell. The
-            agent reads the setup document and installs it for you.
-
-            ```text
-            Read https://omni-scientist.github.io/setup/install.md and install and configure the OmniScientist skill for this agent, following the steps.
-            ```
-
-            For the desktop app or the terminal agent, get the line for your machine at
-            <https://omni-scientist.github.io/>.
-
-            ## Downloads
-
-            | File | What it is |
-            |---|---|
-            | `OmniScientist-*-windows-x64.zip`, `OmniScientist-macos-*.tar.gz`, `OmniScientist-linux-*.tar.gz` | Desktop workbench |
-            | `omnisci-windows-x86_64.exe`, `omnisci-darwin-*`, `omnisci-linux-*` | Terminal agent |
-            | `omnisci-skill.zip` | Skill, unpack into `~/.claude/skills/` |
-
-            Verify with `sha256sum -c SHA256SUMS`.
+      # 兜底。幂等：正文已经就位就不动，只有占位那种情况才补，并把自动生成的
+      # changelog 那行留在末尾。最坏结果是没补上，不会把已有正文弄坏。
+      - name: Make sure the release page is not blank
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          current="$(gh release view "$tag" --json body --jq .body)"
+          if printf '%s' "$current" | grep -q '^## Install'; then
+            echo "正文已就位，不动它"
+            exit 0
+          fi
+          echo "正文只有 changelog 或是空的，补上说明"
+          cp .github/release-notes.md notes.md
+          changelog="$(printf '%s' "$current" | grep -E '^\*\*Full Changelog\*\*' || true)"
+          if [ -n "$changelog" ]; then
+            printf '\n%s\n' "$changelog" >> notes.md
+          fi
+          gh release edit "$tag" --notes-file notes.md
+          echo "发布页正文已写入"
