@@ -1,6 +1,6 @@
 {
   "name": "omnisci",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A general DeepSeek V4 Flash terminal harness with an opt-in scientific paper skill",
   "type": "module",
   "bin": {
