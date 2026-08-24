@@ -362,7 +362,7 @@ function ToolRun({
             以前直接裸渲染，英文界面上就露出一句中文。 */}
         <span className="tool-run-title">
           <strong>{t(run.title)}</strong>
-          <small>{run.summary}</small>
+          <small>{t(run.summary)}</small>
         </span>
         {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
       </button>
@@ -387,7 +387,7 @@ function ArtifactRow({ artifact, onOpen }: { artifact: Artifact; onOpen: () => v
       </span>
       <span className="artifact-copy">
         <strong>{artifact.title}</strong>
-        <small>{artifact.detail}</small>
+        <small>{t(artifact.detail)}</small>
       </span>
       <span className="artifact-path">{artifact.path}</span>
       <PanelRightOpen size={16} className="artifact-open-icon" />
@@ -438,7 +438,7 @@ function AssistantMessage({
             {message.citations.map((citation) => (
               <span className="citation-chip" key={citation.id} title={citation.source}>
                 <span>{citation.id}</span>
-                {citation.label}
+                {t(citation.label)}
               </span>
             ))}
           </div>

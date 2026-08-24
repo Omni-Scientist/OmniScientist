@@ -267,4 +267,6 @@ export const fr: Record<string, string> = {
   "选择数据": "Sélectionner les données",
   "（不推理）": "(sans raisonnement)",
   "（最强）": "(maximal)",
+  "运行中断": "Exécution interrompue",
+  "研究运行中断": "Exécution de recherche interrompue",
 };

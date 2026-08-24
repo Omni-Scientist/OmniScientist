@@ -242,7 +242,7 @@ function FigureOutput({ artifact }: { artifact: Artifact }) {
       </div>
       <figcaption>
         <strong>{artifact.caption ?? artifact.title}</strong>
-        <span>{artifact.detail} · {artifact.updatedAt}</span>
+        <span>{t(artifact.detail)} · {t(artifact.updatedAt)}</span>
       </figcaption>
     </figure>
   );
@@ -330,7 +330,7 @@ function TraceEntryRow({
         <span className="trace-entry-copy">
           <span><code>{entry.tool}</code>{entry.importance === "milestone" ? <small>{t("关键节点")}</small> : null}</span>
           <strong>{t(entry.label)}</strong>
-          <small>{entry.detail}</small>
+          <small>{t(entry.detail)}</small>
         </span>
         <ChevronDown size={16} className={expanded ? "is-rotated" : ""} />
       </button>
@@ -666,7 +666,7 @@ export function Workbench({
                         onRemove={() => onCloseArtifact(artifact.id)}
                       />
                       <DataTableOutput artifact={artifact} />
-                      <div className="nb-output-meta"><span>{artifact.path}</span><span>{artifact.detail}</span></div>
+                      <div className="nb-output-meta"><span>{artifact.path}</span><span>{t(artifact.detail)}</span></div>
                     </div>
                   </section>
                 );
@@ -756,7 +756,7 @@ export function Workbench({
                       </>}
                     />
                     <PaperOutput artifact={artifact} />
-                    <div className="nb-output-meta"><span>{artifact.path}</span><span>{artifact.detail}</span></div>
+                    <div className="nb-output-meta"><span>{artifact.path}</span><span>{t(artifact.detail)}</span></div>
                   </div>
                 </section>
               );

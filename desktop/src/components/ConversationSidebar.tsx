@@ -172,7 +172,7 @@ export function ConversationSidebar({
                 >
                   <span className="session-row-topline">
                     <span className="session-title">{t(session.title)}</span>
-                    <span className="session-time">{session.updatedAt}</span>
+                    <span className="session-time">{t(session.updatedAt)}</span>
                   </span>
                   <span className="session-row-bottomline">
                     <StatusMark status={session.status} />
