@@ -47,7 +47,7 @@ import { verifyPaperDelivery } from "./delivery.ts";
 import { resolveInvocation } from "./invocation.ts";
 import { checkForUpdate, updateCommand } from "./update.ts";
 
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 const OMNI_PROVIDER: ProviderName = "deepseek";
 const OMNI_MODEL = "deepseek-v4-flash";
 
