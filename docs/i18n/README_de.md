@@ -34,7 +34,7 @@
 
 ## Neuigkeiten
 
-- **2026-08-24** · **Mehrsprachige Unterstützung.** Die Benutzeroberfläche des Arbeitsbereichs und diese Seite sind beide in mehreren Sprachen verfügbar, die oben auf dieser Seite aufgeführt und über die Symbolleiste in der App umgeschaltet werden.
+- **2026-08-24** · **Mehrsprachige Unterstützung.** Die Benutzeroberfläche des Arbeitsbereichs und diese Seite sind beide in mehreren Sprachen verfügbar, die oben auf dieser Seite aufgeführt und über die Symbolleiste in der App umgeschaltet werden. *(v0.1.3)*
 - **2026-08-23** · **Multimodale DeepSeek-Unterstützung.** `deepseek-v4-flash-vision-exp` ergänzt den Sidecar für die Wahrnehmung, sodass ein einziger DeepSeek-Schlüssel nun sowohl Reasoning als auch Vision abdeckt. *(v0.1.2)*
 - **2026-08-18** · **Erstes Patch-Release.** Release-Assets enthalten genau ein `SHA256SUMS`, und die Installationsprogramme verifizieren es vor der Installation. *(v0.1.1)*
 - **2026-08-16** · **Erste öffentliche Veröffentlichung.** Desktop-App, Terminal-Agent und ein Claude-Code-Skill aus einer einzigen Codebasis. *(v0.1.0)*
