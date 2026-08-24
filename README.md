@@ -32,9 +32,11 @@
 
 ---
 
-<video controls playsinline preload="metadata" width="100%" poster="assets/shot-paper.jpg">
-  <source src="https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/assets/omni_v2.mp4" type="video/mp4">
-</video>
+
+
+https://github.com/user-attachments/assets/15fc5101-a7bc-41fb-93ff-17eeba0e37fb
+
+
 
 ## News
 
