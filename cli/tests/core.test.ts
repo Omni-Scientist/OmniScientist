@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 import { ApprovalPolicy } from "../src/approval.ts";
@@ -31,8 +31,12 @@ import {
 } from "../src/update.ts";
 import { columns, rule } from "../src/render/caps.ts";
 import {
-  ensureManagedToolsOnPath, pythonCommand, resetInterpreterCache, shellCommand, venvPython,
+  basePythonCommand, basePythonCommandAsync, ensureManagedToolsOnPath, FIND_SPEC_PROBE,
+  missingModules, pythonCommand, pythonCommandAsync, resetInterpreterCache,
+  shellCommand, venvPython,
 } from "../src/interpreters.ts";
+import { gatherSignals, resetSignalCache } from "../src/triggers.ts";
+import { harvestEnvAssignments } from "../src/shell-env.ts";
 
 const silentPresenter: Presenter = {
   turnStart() {},
@@ -1288,5 +1292,233 @@ describe("修补历史会话里缺失的工具回执", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+
+describe("处境信号里的 git 分支", () => {
+  test("目录不存在时不抛，只是没有分支信号", () => {
+    resetSignalCache();
+    const gone = join(tmpdir(), "omnisci-not-a-dir-2f9c1");
+    expect(existsSync(gone)).toBe(false);
+    // Bun.spawnSync 在 cwd 不存在时是**抛**，不是返回非零。以前没接住，这一抛会
+    // 顺着 gatherSignals → createRuntime 冒出去，界面上就是"打开会话 404"。
+    // 工作区目录被人改名或删掉时会真的走到这里。
+    const signals = gatherSignals(gone, "");
+    expect(signals.gitBranch).toBeNull();
+    expect(signals.filenames).toEqual([]);
+  });
+
+  test("同一个目录在缓存期内不再去问 git", () => {
+    resetSignalCache();
+    const dir = mkdtempSync(join(tmpdir(), "omnisci-branch-"));
+    try {
+      if (spawnSync("git", ["init", "-q", "-b", "trunk", dir]).status !== 0) return; // 没装 git 就跳过
+      spawnSync("git", ["-C", dir, "-c", "user.email=t@t", "-c", "user.name=t",
+        "commit", "-q", "--allow-empty", "-m", "x"]);
+      expect(gatherSignals(dir, "").gitBranch).toBe("trunk");
+
+      // 把 .git 挪开。真去问的话这时一定问不出分支了；还能拿到 trunk 就证明走的是缓存。
+      renameSync(join(dir, ".git"), join(dir, ".git-moved"));
+      expect(gatherSignals(dir, "").gitBranch).toBe("trunk");
+
+      // 缓存清掉就该重新去问，这次问不出来。
+      resetSignalCache();
+      expect(gatherSignals(dir, "").gitBranch).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("依赖探测：find_spec 那一档", () => {
+  // 这个脚本写错的后果是静默的：体检会说包缺了，然后一路把用户指去重装一堆
+  // 本来就装着的东西。所以拿真解释器跑一遍，不只测字符串。
+  const python = (): string[] | null => {
+    try { return pythonCommand(); } catch { return null; }
+  };
+
+  test("认得出哪个装了哪个没装", () => {
+    const py = python();
+    if (!py) return;
+    const r = spawnSync(py[0]!, [...py.slice(1), "-c", FIND_SPEC_PROBE,
+      "sys", "json", "omnisci_no_such_pkg_2f9c1"], { encoding: "utf-8" });
+    expect(r.status).toBe(0);
+    expect(missingModules(r.stdout || "")).toEqual(["omnisci_no_such_pkg_2f9c1"]);
+  });
+
+  test("一个都不缺时是空输出", () => {
+    const py = python();
+    if (!py) return;
+    const r = spawnSync(py[0]!, [...py.slice(1), "-c", FIND_SPEC_PROBE, "sys", "json"],
+      { encoding: "utf-8" });
+    expect(r.status).toBe(0);
+    expect(missingModules(r.stdout || "")).toEqual([]);
+  });
+
+  test("解析时空白和空段都不算缺", () => {
+    expect(missingModules("")).toEqual([]);
+    expect(missingModules("   ")).toEqual([]);
+    expect(missingModules("numpy, scipy ,")).toEqual(["numpy", "scipy"]);
+  });
+});
+
+describe("解释器解析：同步和异步必须是同一个答案", () => {
+  // 两条路径各有一份探测代码（一个 spawnSync 一个 Bun.spawn），顺序却只有一份
+  // 配方。这几条测的就是「配方共用」这件事真的成立：谁先算都一样，而且互相认账。
+  // 走岔的后果很隐蔽：桌面版体检报的是 A 解释器，论文工具跑的是 B。
+
+  test("先异步后同步，答案一致且同步直接命中缓存", async () => {
+    resetInterpreterCache();
+    const viaAsync = await pythonCommandAsync();
+    const viaSync = pythonCommand();
+    expect(viaSync).toEqual(viaAsync);
+  });
+
+  test("先同步后异步，答案一致", async () => {
+    resetInterpreterCache();
+    const viaSync = pythonCommand();
+    const viaAsync = await pythonCommandAsync();
+    expect(viaAsync).toEqual(viaSync);
+  });
+
+  test("基础解释器那一档也一致", async () => {
+    resetInterpreterCache();
+    const viaAsync = await basePythonCommandAsync();
+    resetInterpreterCache();
+    const viaSync = basePythonCommand();
+    expect(viaSync).toEqual(viaAsync);
+  });
+
+  test("并发要过来一堆也只认一个结果", async () => {
+    resetInterpreterCache();
+    const all = await Promise.all(Array.from({ length: 5 }, () => pythonCommandAsync()));
+    for (const argv of all) expect(argv).toEqual(all[0]!);
+  });
+});
+
+describe("从 shell 配置里认领凭据", () => {
+  const KEYS = ["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
+
+  test("认得出 export 前缀、引号、和裸写", () => {
+    const text = [
+      "# 统一 API Key 管理",
+      'export OPENAI_API_KEY="sk-openai-aaa"',
+      "export DEEPSEEK_API_KEY='sk-ds-bbb'",
+      "ANTHROPIC_API_KEY=sk-ant-ccc",
+    ].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({
+      OPENAI_API_KEY: "sk-openai-aaa",
+      DEEPSEEK_API_KEY: "sk-ds-bbb",
+      ANTHROPIC_API_KEY: "sk-ant-ccc",
+    });
+  });
+
+  test("只认白名单里的名字，别的一概不碰", () => {
+    // 把用户 rc 里所有 export 都吸进来会踩到 PATH、LANG、代理设置，
+    // 而且是在别人的机器上踩，后果不可预期。
+    const text = [
+      'export PATH="/opt/evil/bin:$PATH"',
+      "export LANG=en_US.UTF-8",
+      "export http_proxy=http://127.0.0.1:7890",
+      "export OPENAI_API_KEY=sk-only-this-one",
+    ].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({ OPENAI_API_KEY: "sk-only-this-one" });
+  });
+
+  test("命令替换一律不碰，查不到的引用也丢掉", () => {
+    // 退回字面的 "$FOO" 比读不到更糟：看起来像配好了，
+    // 一路带到 API 请求上才报鉴权失败。
+    const text = [
+      "export OPENAI_API_KEY=$NEVER_DEFINED_ANYWHERE",
+      "export DEEPSEEK_API_KEY=$(cat /tmp/key)",
+      "export ANTHROPIC_API_KEY=`cat /tmp/key`",
+    ].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({});
+  });
+
+  test("同文件里的别名要展开", () => {
+    // export DEEPSEEK_API_KEY="$DEEPSEEK_KEY" 这种给同一把 key 起别名的写法
+    // 很常见。展开它不需要执行任何东西，纯文本替换。实测撞到过：一开始把带 $
+    // 的值全丢了，那种写法的 key 就一直认不到。
+    const text = [
+      "export DEEPSEEK_KEY=sk-the-real-one",
+      'export DEEPSEEK_API_KEY="$DEEPSEEK_KEY"',
+      'export ANTHROPIC_API_KEY="${DEEPSEEK_KEY}"',
+    ].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({
+      DEEPSEEK_API_KEY: "sk-the-real-one",
+      ANTHROPIC_API_KEY: "sk-the-real-one",
+    });
+  });
+
+  test("别名源不在白名单里也能用来展开，但它自己不会被返回", () => {
+    // DEEPSEEK_KEY 不是我们认的名字，可它是别名的源，必须进解析表。
+    const text = ["export DEEPSEEK_KEY=sk-source", 'export DEEPSEEK_API_KEY="$DEEPSEEK_KEY"'].join("\n");
+    const got = harvestEnvAssignments(text, KEYS);
+    expect(got).toEqual({ DEEPSEEK_API_KEY: "sk-source" });
+    expect(got.DEEPSEEK_KEY).toBeUndefined();
+  });
+
+  test("引用必须在前面定义过，跟 shell 的顺序一致", () => {
+    const text = ['export DEEPSEEK_API_KEY="$DEFINED_LATER"', "export DEFINED_LATER=sk-too-late"].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({});
+  });
+
+  test("单引号里 shell 不展开，我们也不展开", () => {
+    const text = ["export DEEPSEEK_KEY=sk-real", "export DEEPSEEK_API_KEY='$DEEPSEEK_KEY'"].join("\n");
+    // 字面的 $DEEPSEEK_KEY 不是个能用的 key，丢掉而不是塞进去
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({});
+  });
+
+  test("绝不回退到 process.env", () => {
+    // 回退等于把我们刚决定不信任的那个环境又引回来。
+    process.env.OMNISCI_TEST_ALIAS_SOURCE = "not-a-real-key";
+    try {
+      const text = 'export OPENAI_API_KEY="$OMNISCI_TEST_ALIAS_SOURCE"';
+      expect(harvestEnvAssignments(text, KEYS)).toEqual({});
+    } finally {
+      delete process.env.OMNISCI_TEST_ALIAS_SOURCE;
+    }
+  });
+
+  test("读不懂的行跳过，不像 loadEnvFile 那样整份拒绝", () => {
+    // 用户的 rc 里有 if、函数、alias 是常态。为一行 alias 丢掉整份 key，
+    // 用户只会看到「我明明配了」。
+    const text = [
+      "if [ -f ~/.fzf.bash ]; then",
+      "  source ~/.fzf.bash",
+      "fi",
+      "alias ll='ls -la'",
+      "myfunc() { echo hi; }",
+      "export OPENAI_API_KEY=sk-survived",
+    ].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({ OPENAI_API_KEY: "sk-survived" });
+  });
+
+  test("注释掉的旧 key 不算数，同名取第一个", () => {
+    const text = [
+      "# export OPENAI_API_KEY=sk-commented",
+      "export OPENAI_API_KEY=sk-current",
+      "export OPENAI_API_KEY=sk-later-duplicate",
+    ].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({ OPENAI_API_KEY: "sk-current" });
+  });
+
+  test("没加引号时行尾注释要去掉，加了引号则原样保留", () => {
+    const text = [
+      "export OPENAI_API_KEY=sk-bare # 这是我的 key",
+      'export DEEPSEEK_API_KEY="sk-quoted # 不是注释"',
+    ].join("\n");
+    expect(harvestEnvAssignments(text, KEYS)).toEqual({
+      OPENAI_API_KEY: "sk-bare",
+      DEEPSEEK_API_KEY: "sk-quoted # 不是注释",
+    });
+  });
+
+  test("空值和空文本都给空结果", () => {
+    expect(harvestEnvAssignments("", KEYS)).toEqual({});
+    expect(harvestEnvAssignments("export OPENAI_API_KEY=", KEYS)).toEqual({});
+    expect(harvestEnvAssignments('export OPENAI_API_KEY=""', KEYS)).toEqual({});
   });
 });

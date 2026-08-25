@@ -139,14 +139,29 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const listed = await transport.listSessions();
+      // 上次选中哪个会话是从 localStorage 读的，发请求之前就知道，所以这两个请求
+      // 没有先后依赖，可以一起发。以前是串着来的：先等列表回来，再去取会话内容，
+      // 整个过程界面只有一个转圈。绝大多数情况下 remembered 就是最后要用的那个，
+      // 于是首屏时间直接从"两趟往返"变成"一趟"。
+      // 猜错了（那个会话已经没了）也只是白发一个请求，下面照常退回原来的选法。
+      const remembered = readLocalStorage(SELECTED_SESSION_KEY);
+      const [listed, guessed] = await Promise.all([
+        transport.listSessions(),
+        remembered ? transport.getSession(remembered).catch(() => null) : Promise.resolve(null),
+      ]);
       if (cancelled) return;
       setSessions(listed);
-      const remembered = readLocalStorage(SELECTED_SESSION_KEY);
       const remembered2 = remembered && listed.some((item) => item.id === remembered) ? remembered : undefined;
       const preferredId = remembered2
         ?? listed.find((item) => item.id.startsWith("local-"))?.id
         ?? listed[0]?.id;
+
+      // 猜中了就直接用，省掉第二趟。
+      if (guessed && preferredId === guessed.id) {
+        activateSession(guessed);
+        setBooting(false);
+        return;
+      }
 
       if (!preferredId) {
         // 一条会话都没有：直接开一个空的，落地就能打字。开不出来通常是还没配 key，

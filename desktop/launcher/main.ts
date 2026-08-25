@@ -32,8 +32,10 @@ const OMNI_HOME = join(homedir(), ".omnisci");
 const LOG_DIR = join(OMNI_HOME, "logs");
 const LOCK_FILE = join(OMNI_HOME, "desktop.lock");
 
+import { harvestEnvAssignments } from "../../cli/src/shell-env.ts";
 import {
-  basePythonCommand, ensureManagedToolsOnPath, pythonCommand, venvPython,
+  basePythonCommandAsync, captureCommand, ensureManagedToolsOnPath, FIND_SPEC_PROBE,
+  missingModules, pythonCommandAsync, venvPython,
 } from "../../cli/src/interpreters.ts";
 // 数据目录必须跟 venvPython() 用的是同一个来源。这里以前自己抄了一份同样逻辑的
 // dataDir()，两边碰巧一致所以看不出问题；一旦有了 OMNISCI_DATA_DIR 覆盖，
@@ -133,8 +135,13 @@ function usage(): void {
       --version           打印版本
   -h, --help              这段
 
-  凭据从 ~/.omnisci/env 读，格式是每行 KEY=VALUE，不会被当 shell 执行。
-  没有凭据也能启动，界面上会给配置入口。
+  凭据按这个顺序找，先找到的赢：
+    1. 进程自己的环境变量（从终端启动，或 Windows 上 setx 设过的）
+    2. ~/.omnisci/env（界面上填的存这儿）
+    3. ~/.keys.env、~/.env、~/.zshrc、~/.bashrc、~/.bash_profile、~/.profile
+       只从里面捡 *_API_KEY 那几个名字，只认字面值，绝不当 shell 执行。
+       双击启动的进程继承不到 shell 环境，这一步就是为了让你不用再填一遍。
+  一个都没有也能启动，界面上会给配置入口。
 `);
 }
 
@@ -211,6 +218,75 @@ function loadEnvFile(path: string): void {
   }
   for (const [k, v] of parsed) if (!process.env[k]) process.env[k] = v;
   log(`loaded ${parsed.length} credentials from ${path}`);
+}
+
+/**
+ * 从用户 shell 配置里认领凭据时，只认这几个名字。
+ * 跟 credentials.ts 里读的那几个对齐，多一个 DEEPSEEK_API 是历史别名。
+ */
+const ADOPTABLE_ENV_NAMES = [
+  "DEEPSEEK_API_KEY",
+  "DEEPSEEK_API",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "OMNISCI_API_KEY",
+] as const;
+
+/**
+ * 按顺序扫的文件。越靠前越优先，先拿到就不再被后面的覆盖。
+ *
+ * 前三个是专门放 key 的文件，最可能是干净的 KEY=VALUE；后面几个是 shell 的 rc，
+ * 放在后面是因为那里的 export 更可能是历史遗留或者被注释掉又改回来的。
+ */
+function credentialSearchPath(): string[] {
+  const home = homedir();
+  return [
+    ".keys.env",
+    ".env",
+    ".zshrc",
+    ".bashrc",
+    ".bash_profile",
+    ".profile",
+  ].map((name) => join(home, name));
+}
+
+/**
+ * 环境变量里没有的凭据，去用户的 shell 配置里找。
+ *
+ * 桌面版是双击起来的，**继承不到 shell 的环境变量**：macOS 上 Finder 启动的程序
+ * 不走 .zshrc，Windows 上资源管理器启动的程序只认注册表里那份，git-bash 里
+ * `export` 的它看不见。结果就是用户在 ~/.keys.env 里明明配好了 OPENAI_API_KEY，
+ * 应用还在说"还没配 key"，只能在界面上再填一遍。2026-08-25 被这个问题骂过。
+ *
+ * 优先级：进程里已有的 > ~/.omnisci/env（界面上填的）> 这里扫出来的。所以这个函数
+ * 必须在 loadEnvFile 之后调用，而且只填空缺，绝不覆盖。
+ *
+ * 解析和安全边界都在 harvestEnvAssignments 里，这里只负责走一遍文件。
+ */
+function adoptShellCredentials(): void {
+  const missing = () => ADOPTABLE_ENV_NAMES.filter((name) => !process.env[name]);
+  if (!missing().length) return;
+
+  for (const path of credentialSearchPath()) {
+    if (!missing().length) return;
+    if (!existsSync(path)) continue;
+    let text: string;
+    try {
+      text = readFileSync(path, "utf-8");
+    } catch (error) {
+      log(`读不了 ${path}：${errorMessage(error)}`);
+      continue;
+    }
+    const found = harvestEnvAssignments(text, ADOPTABLE_ENV_NAMES);
+    const taken: string[] = [];
+    for (const [name, value] of Object.entries(found)) {
+      if (process.env[name]) continue;
+      process.env[name] = value;
+      taken.push(name);
+    }
+    // 只记名字，绝不记值。
+    if (taken.length) log(`从 ${path} 认领了 ${taken.join("、")}`);
+  }
 }
 
 /**
@@ -457,11 +533,16 @@ function openBrowser(url: string): void {
 
 interface Check { ok: boolean; detail: string }
 
-function which(bin: string): string | null {
+/** 探测类子进程的上限。一个卡住的解释器不该把整个体检拖死。 */
+const PROBE_TIMEOUT_MS = 20_000;
+/** 真 import 一遍那次的上限。Windows 冷启动实测到过 25 秒，留足余量。 */
+const DEEP_PROBE_TIMEOUT_MS = 180_000;
+
+async function which(bin: string): Promise<string | null> {
   const probe = platform() === "win32" ? "where" : "which";
-  const r = spawnSync(probe, [bin], { encoding: "utf-8" });
+  const r = await captureCommand(probe, [bin], PROBE_TIMEOUT_MS);
   const first = (r.stdout || "").split(/\r?\n/)[0]?.trim();
-  return r.status === 0 && first ? first : null;
+  return r.code === 0 && first ? first : null;
 }
 
 /**
@@ -493,7 +574,18 @@ function requiredPackages(): string[] {
   } catch { return []; }
 }
 
-function doctor(): Record<string, Check> {
+/**
+ * 依赖体检。
+ *
+ * `deep=false`（默认）用 find_spec 查包在不在，快。
+ * `deep=true` 真的 import 一遍，能抓到"装了但坏了"（典型是 numpy 和 pandas 的
+ * ABI 对不上，find_spec 照样说有），代价是 Windows 13 秒、Mac 1.5 秒。
+ *
+ * 所以启动和 /api/doctor 一律走快检，深检只在 bootstrap 刚装完那一次跑：那本来
+ * 就是个以分钟计的操作，也正是最该确认"真的能用"的时刻。两档都在这个函数里，
+ * 是为了让"体检"只有一个定义，别出现两处判断口径不一样。
+ */
+async function doctor(deep = false): Promise<Record<string, Check>> {
   const checks: Record<string, Check> = {};
 
   // 走跟论文工具完全同一条解析。之前这里只判可执行文件在不在，
@@ -501,9 +593,9 @@ function doctor(): Record<string, Check> {
   // 而真正跑工具时它退 49。体检说好、工具全挂，是最难查的一种。
   let python: string[] | null = null;
   try {
-    python = pythonCommand();
-    const v = spawnSync(python[0]!, [...python.slice(1), "-V"], { encoding: "utf-8" });
-    checks.python = { ok: v.status === 0, detail: `${python.join(" ")} ${(v.stdout || v.stderr || "").trim()}` };
+    python = await pythonCommandAsync();
+    const v = await captureCommand(python[0]!, [...python.slice(1), "-V"]);
+    checks.python = { ok: v.code === 0, detail: `${python.join(" ")} ${(v.stdout || v.stderr || "").trim()}` };
   } catch (error) {
     checks.python = { ok: false, detail: errorMessage(error) };
   }
@@ -511,22 +603,59 @@ function doctor(): Record<string, Check> {
   const packages = requiredPackages();
   if (!python || !packages.length) {
     checks.packages = { ok: false, detail: python ? "读不到依赖清单" : "没有 python，无法检查" };
-  } else {
-    const probe = spawnSync(python[0]!, [...python.slice(1), "-c", packages.map((p) => `import ${p}`).join("; ")], { encoding: "utf-8" });
-    checks.packages = probe.status === 0
-      ? { ok: true, detail: `${packages.length} 个包齐全` }
+  } else if (deep) {
+    const probe = await captureCommand(
+      python[0]!,
+      [...python.slice(1), "-c", packages.map((p) => `import ${p}`).join("; ")],
+      DEEP_PROBE_TIMEOUT_MS,
+    );
+    checks.packages = probe.code === 0
+      ? { ok: true, detail: `${packages.length} 个包导入通过` }
       : { ok: false, detail: (probe.stderr || "").trim().split("\n").pop() || "导入失败" };
+  } else {
+    const probe = await captureCommand(python[0]!, [...python.slice(1), "-c", FIND_SPEC_PROBE, ...packages]);
+    const missing = missingModules(probe.stdout);
+    // 探测脚本自己没跑成（解释器坏了、被 kill 了）跟"包缺了"是两回事，
+    // 分开报，否则用户会被指去装一堆本来就装着的包。
+    checks.packages = probe.code !== 0
+      ? { ok: false, detail: (probe.stderr || "").trim().split("\n").pop() || "查不了依赖" }
+      : missing.length
+        ? { ok: false, detail: `缺 ${missing.join("、")}` }
+        : { ok: true, detail: `${packages.length} 个包齐全` };
   }
 
   const bundledTectonic = join(dataDir(), "bin", platform() === "win32" ? "tectonic.exe" : "tectonic");
-  const tectonic = existsSync(bundledTectonic) ? bundledTectonic : which("tectonic");
+  const tectonic = existsSync(bundledTectonic) ? bundledTectonic : await which("tectonic");
   if (!tectonic) {
     checks.tectonic = { ok: false, detail: "找不到 tectonic，流程会停在 .tex 不出 PDF" };
   } else {
-    const v = spawnSync(tectonic, ["--version"], { encoding: "utf-8" });
-    checks.tectonic = { ok: v.status === 0, detail: `${tectonic} ${(v.stdout || "").trim()}` };
+    const v = await captureCommand(tectonic, ["--version"]);
+    checks.tectonic = { ok: v.code === 0, detail: `${tectonic} ${(v.stdout || "").trim()}` };
   }
   return checks;
+}
+
+/** 体检结果记多久。够短，装完东西不用等太久才认；够长，挡得住轮询。 */
+const DOCTOR_TTL_MS = 30_000;
+let doctorCache: { at: number; checks: Record<string, Check> } | null = null;
+let doctorInflight: Promise<Record<string, Check>> | null = null;
+
+/**
+ * 带缓存、且同时进来的请求只探一次的体检。
+ *
+ * 以前 /api/doctor 每问一次就重跑一整套，而 macOS 的菜单栏宿主是**轮询**这个
+ * 接口的（packaging/macos/host/main.swift），等于每隔几秒把网关按住一次。
+ */
+async function cachedDoctor(): Promise<Record<string, Check>> {
+  if (doctorCache && Date.now() - doctorCache.at < DOCTOR_TTL_MS) return doctorCache.checks;
+  if (doctorInflight) return doctorInflight;
+  doctorInflight = doctor()
+    .then((checks) => {
+      doctorCache = { at: Date.now(), checks };
+      return checks;
+    })
+    .finally(() => { doctorInflight = null; });
+  return doctorInflight;
 }
 
 // -------------------------------------------------------------------- 依赖引导
@@ -540,11 +669,21 @@ function note(line: string): void {
   log(`bootstrap: ${line}`);
 }
 
-function run(bin: string, args: string[]): boolean {
+/** 装依赖单步的上限。pip 要拉 400 多 MB，网慢的时候十几分钟是正常的，别掐早了。 */
+const INSTALL_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * 跑 bootstrap 的一步，把输出记进引导日志。
+ *
+ * 这里同样不能用 spawnSync：pip install 以分钟计，以前那几分钟里整个网关一句话
+ * 都答不出来，/api/doctor 和 /api/bootstrap 一起超时，界面看着就像死了。
+ * 输出仍然是跑完才一次性记（跟以前一样），只是不再把服务按住。
+ */
+async function run(bin: string, args: string[]): Promise<boolean> {
   note(`$ ${bin} ${args.join(" ")}`);
-  const r = spawnSync(bin, args, { encoding: "utf-8" });
-  for (const line of `${r.stdout || ""}${r.stderr || ""}`.split(/\r?\n/)) if (line.trim()) note(line);
-  return r.status === 0;
+  const r = await captureCommand(bin, args, INSTALL_TIMEOUT_MS);
+  for (const line of `${r.stdout}${r.stderr}`.split(/\r?\n/)) if (line.trim()) note(line);
+  return r.code === 0;
 }
 
 /**
@@ -582,7 +721,7 @@ async function bootstrap(): Promise<void> {
 
     let base: string[];
     try {
-      base = basePythonCommand();
+      base = await basePythonCommandAsync();
     } catch (error) {
       note(errorMessage(error));
       return;
@@ -592,17 +731,17 @@ async function bootstrap(): Promise<void> {
     const venv = join(data, "venv");
     if (!venvPython()) {
       note(`建虚拟环境 ${venv}`);
-      if (!run(base[0]!, [...base.slice(1), "-m", "venv", venv])) { note("建虚拟环境失败"); return; }
+      if (!await run(base[0]!, [...base.slice(1), "-m", "venv", venv])) { note("建虚拟环境失败"); return; }
     }
     const py = venvPython();
     if (!py) { note("虚拟环境建出来了但找不到解释器"); return; }
 
-    if (!run(py, ["-m", "pip", "install", "--upgrade", "pip"])) note("升级 pip 失败，继续");
-    if (!run(py, ["-m", "pip", "install", "-r", requirementsPath()])) { note("装 python 依赖失败"); return; }
+    if (!await run(py, ["-m", "pip", "install", "--upgrade", "pip"])) note("升级 pip 失败，继续");
+    if (!await run(py, ["-m", "pip", "install", "-r", requirementsPath()])) { note("装 python 依赖失败"); return; }
 
     const exe = platform() === "win32" ? "tectonic.exe" : "tectonic";
     const bundled = join(data, "bin", exe);
-    if (!existsSync(bundled) && !which("tectonic")) {
+    if (!existsSync(bundled) && !await which("tectonic")) {
       const target = tectonicUrl();
       if (!target) {
         note(`这个平台（${platform()}/${process.arch}）上游没有现成的 tectonic，需要自己装；`
@@ -614,7 +753,7 @@ async function bootstrap(): Promise<void> {
         const archive = join(data, target.zip ? "tectonic.zip" : "tectonic.tar.gz");
         writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
         // Windows 10 1803 起自带 bsdtar，zip 和 tar.gz 都认；-xf 让它自己判类型。
-        const ok = run("tar", ["-xf", archive, "-C", join(data, "bin"), exe]);
+        const ok = await run("tar", ["-xf", archive, "-C", join(data, "bin"), exe]);
         rmSync(archive, { force: true });
         if (!ok) { note("解压 tectonic 失败"); return; }
       }
@@ -622,7 +761,11 @@ async function bootstrap(): Promise<void> {
 
     // 刚装出来的目录启动时还不存在，这里再挂一次，不然要重启才用得上。
     exposeManagedTools();
-    const after = doctor();
+    // 全场唯一一次深检：真 import 一遍。装完这一刻正是该确认"不只是文件在，
+    // 而是真的能用"的时候，而且这一整套本来就跑了几分钟，多十几秒无所谓。
+    // 结果直接顶进缓存：深检通过意味着快检必然也通过，界面不用再等一次。
+    const after = await doctor(true);
+    doctorCache = { at: Date.now(), checks: after };
     // tectonic 也要算进来。它缺席时论文流程会停在 .tex 不出 PDF，
     // 而以前这里只看 python 和 packages，界面照样报"依赖就绪"——
     // Windows 上尤其明显：那边根本没走过下载这条路，就绪永远是假的。
@@ -680,6 +823,10 @@ if (running) {
 mkdirSync(OMNI_HOME, { recursive: true });
 mkdirSync(opts.workspace, { recursive: true });
 loadEnvFile(process.env.OMNISCI_ENV_FILE || join(OMNI_HOME, "env"));
+// 双击起来的进程继承不到 shell 环境，所以还要去用户的 ~/.keys.env、rc 文件里捡一遍。
+// 必须在 loadEnvFile 之后、import gateway 之前：credentials.ts 在模块体里就把
+// 环境变量读走并删掉了，晚一步就白捡。
+adoptShellCredentials();
 
 SKILL_DIR = installSkill();
 process.env.OMNISCI = join(SKILL_DIR, "bin");
@@ -812,7 +959,7 @@ try {
       }
 
       if (request.method === "GET" && url.pathname === "/api/doctor") {
-        return Response.json({ checks: doctor(), dataDir: dataDir() });
+        return Response.json({ checks: await cachedDoctor(), dataDir: dataDir() });
       }
       if (url.pathname === "/api/bootstrap") {
         if (request.method === "POST") {
@@ -1039,12 +1186,24 @@ process.on("SIGTERM", () => shutdown(EXIT_OK));
 
 if (opts.open) openBrowser(URL_WITH_TOKEN);
 
-// 依赖体检要跑三次 spawnSync，其中 import numpy 那次能到几秒，同步跑会把事件循环
-// 连同信号一起堵住。挪到下一个 tick，启动路径上不欠这笔账。
+/**
+ * 启动后报一次依赖状况。这件事只是为了写日志和给终端一行提示，没有任何人在等它。
+ *
+ * 以前是 `setTimeout(..., 0)` 里同步跑，那句"挪到下一个 tick 就不欠账"的注释是错的：
+ * 一个 tick 是微秒级，而浏览器冷启动要一到三秒，第一批请求正好落在体检中间，
+ * 被 spawnSync 按住。Windows 上实测因此白等 13.7 秒。
+ *
+ * 现在两道保险：体检整个是异步的（capture()），堵不住 HTTP；再往后压一秒，
+ * 是为了别跟浏览器抢磁盘和杀毒软件的扫描配额，让首屏那几个请求先过去。
+ */
 setTimeout(() => {
-  const health = doctor();
-  for (const [name, check] of Object.entries(health)) {
-    if (!check.ok) process.stdout.write(`  依赖待装 ${name}: ${check.detail}\n`);
-    log(`doctor ${name}: ${check.ok ? "ok" : "missing"} ${check.detail}`);
-  }
-}, 0);
+  void cachedDoctor().then(
+    (health) => {
+      for (const [name, check] of Object.entries(health)) {
+        if (!check.ok) process.stdout.write(`  依赖待装 ${name}: ${check.detail}\n`);
+        log(`doctor ${name}: ${check.ok ? "ok" : "missing"} ${check.detail}`);
+      }
+    },
+    (error: unknown) => log(`doctor 失败: ${String(error)}`),
+  );
+}, 1000);

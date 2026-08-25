@@ -44,14 +44,57 @@ function whichAll(bin: string): string[] {
   return (r.stdout || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
-function dedupe(items: string[][]): string[][] {
-  const seen = new Set<string>();
-  return items.filter((argv) => {
-    const key = argv.join("\u0000");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+export interface CapturedCommand { code: number; stdout: string; stderr: string }
+
+/**
+ * 起一个子进程收走输出，**不堵事件循环**。
+ *
+ * 桌面版的 HTTP 服务跟这些探测跑在同一条事件循环上，spawnSync 一进去，所有还没
+ * 答复的请求就地排队。2026-08-25 在 Windows 上量过两次代价：那发依赖体检堵了
+ * 13.7 秒，解释器探测本身堵了 1.3 秒。CLI 那边是一次性进程，没这个约束，
+ * 所以同步的那几个照旧留着。
+ *
+ * 找不到可执行文件时 Bun.spawn 是**抛**不是返回非零，这里统一收成 code 127。
+ * windowsHide：GUI 版自己没有控制台，不说一声就可能闪黑窗。
+ */
+export async function captureCommand(
+  bin: string,
+  args: string[],
+  timeoutMs = PROBE_MS,
+): Promise<CapturedCommand> {
+  try {
+    const proc = Bun.spawn([bin, ...args], {
+      stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true,
+    });
+    const timer = setTimeout(() => { try { proc.kill(); } catch { /* 已经结束了 */ } }, timeoutMs);
+    try {
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      return { code: await proc.exited, stdout, stderr };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    return { code: 127, stdout: "", stderr: String(error) };
+  }
+}
+
+/** whichAll 的异步版，语义完全一样。 */
+async function whichAllAsync(bin: string): Promise<string[]> {
+  const win = process.platform === "win32";
+  const r = await captureCommand(win ? "where" : "which", win ? [bin] : ["-a", bin]);
+  if (r.code !== 0) return [];
+  return r.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+/** 同一个 argv 只试一次：python3 和 python 两轮 which 经常指到同一个文件。 */
+function firstTimeSeen(seen: Set<string>, argv: string[]): boolean {
+  const key = argv.join("\u0000");
+  if (seen.has(key)) return false;
+  seen.add(key);
+  return true;
 }
 
 // ------------------------------------------------------------------ python
@@ -79,6 +122,15 @@ function probePython(argv: string[]): boolean {
   return r.status === 0 && (r.stdout || "").trim() === "3";
 }
 
+/** probePython 的异步版，判据完全一样。 */
+async function probePythonAsync(argv: string[]): Promise<boolean> {
+  const r = await captureCommand(
+    argv[0]!,
+    [...argv.slice(1), "-c", "import sys; sys.stdout.write('%d' % sys.version_info[0])"],
+  );
+  return r.code === 0 && r.stdout.trim() === "3";
+}
+
 /**
  * 受管虚拟环境里的解释器，没建就是 null。
  *
@@ -93,36 +145,100 @@ export function venvPython(base: string = dataDir()): string | null {
   return existsSync(path) ? path : null;
 }
 
-function pythonCandidates(useVenv: boolean): string[][] {
-  const out: string[][] = [];
+/**
+ * 问 python「这些包在不在」的探测脚本。模块名从 argv 传进去，stdout 回缺的那几个，
+ * 逗号分隔；一个都不缺就是空输出。
+ *
+ * 用 importlib.util.find_spec 而不是真 `import`：find_spec 只走 import 系统的
+ * 「查找」那一半，跳过「执行」那一半。同样 9 个包，Windows 上 560 毫秒，真 import
+ * 要 13 秒（2026-08-25 实测，差 23 倍），而后者曾经就长在桌面版的启动路径上。
+ *
+ * 换来的代价要认：find_spec 只知道文件在不在，抓不到「装了但坏了」（典型是 numpy
+ * 和 pandas 的 ABI 对不上）。所以装完依赖那一次仍然要真 import 一遍验收，
+ * 见 desktop/launcher/main.ts 里 doctor(deep)。
+ *
+ * 模块名走 argv 不拼进代码，省得名字里有引号之类的东西时把脚本拼坏。
+ */
+export const FIND_SPEC_PROBE = [
+  "import importlib.util as u, sys",
+  "miss = []",
+  "for m in sys.argv[1:]:",
+  "    try:",
+  "        if u.find_spec(m) is None: miss.append(m)",
+  "    except Exception: miss.append(m)",
+  "sys.stdout.write(','.join(miss))",
+].join("\n");
+
+/** 解析 FIND_SPEC_PROBE 的 stdout。空输出（含只有空白）就是一个都不缺。 */
+export function missingModules(stdout: string): string[] {
+  return stdout.split(",").map((name) => name.trim()).filter(Boolean);
+}
+
+/** 候选的来源：要么是现成的 argv，要么是「去 PATH 上找这个名字」。 */
+type PythonSource = { argv: string[] } | { lookup: string };
+
+/**
+ * 候选按什么顺序来。**这里只描述顺序，不做任何探测**，所以同步和异步两条解析路径
+ * 能共用同一份，不会哪天改了一处忘了另一处；而顺序恰恰是这个文件里最不能错的东西。
+ *
+ * lookup 那两条要真去 PATH 上查，在 Windows 上一次 240 到 400 毫秒（2026-08-25
+ * 实测 where.exe）。受管 venv 排在它们前面，只要建过就必然胜出，所以走到那里
+ * 才付这笔钱，别一上来就把候选全建出来。
+ */
+function* pythonSources(useVenv: boolean): Generator<PythonSource> {
   const override = (process.env.OMNISCI_PYTHON || "").trim();
-  if (override) out.push([override]);
+  if (override) yield { argv: [override] };
 
   // 受管的 venv 优先：依赖是装在它里面的，系统 python 不一定有 imageio/matplotlib。
   const venv = useVenv ? venvPython() : null;
-  if (venv) out.push([venv]);
+  if (venv) yield { argv: [venv] };
 
-  for (const name of ["python3", "python"]) {
-    for (const path of whichAll(name)) out.push([path]);
-  }
+  yield { lookup: "python3" };
+  yield { lookup: "python" };
+
   // py 启动器是 Windows 上最可靠的兜底，它知道真 python 装在哪。
-  if (process.platform === "win32") out.push(["py", "-3"]);
-  return dedupe(out);
+  if (process.platform === "win32") yield { argv: ["py", "-3"] };
 }
 
-function resolvePython(useVenv: boolean): string[] {
-  const tried: string[] = [];
-  for (const argv of pythonCandidates(useVenv)) {
-    tried.push(argv.join(" "));
-    if (probePython(argv)) return argv;
-  }
-  throw new Error(
+function noPythonError(tried: string[]): Error {
+  return new Error(
     "找不到能用的 python 3。试过：" + (tried.join("、") || "（PATH 上一个都没有）")
     + "。装好 python 3 之后重开，或者设 OMNISCI_PYTHON 指到具体的可执行文件。"
     + (process.platform === "win32"
       ? " 注意 Windows 上的 python3 常常是微软商店的占位符（2 字节，跑起来退 49），那个不是 python。"
       : ""),
   );
+}
+
+function resolvePython(useVenv: boolean): string[] {
+  const tried: string[] = [];
+  const seen = new Set<string>();
+  for (const source of pythonSources(useVenv)) {
+    const argvs = "argv" in source ? [source.argv] : whichAll(source.lookup).map((path) => [path]);
+    for (const argv of argvs) {
+      if (!firstTimeSeen(seen, argv)) continue;
+      tried.push(argv.join(" "));
+      if (probePython(argv)) return argv;
+    }
+  }
+  throw noPythonError(tried);
+}
+
+/** resolvePython 的异步版。顺序、去重、判据、报错文案全部跟同步那份一致。 */
+async function resolvePythonAsync(useVenv: boolean): Promise<string[]> {
+  const tried: string[] = [];
+  const seen = new Set<string>();
+  for (const source of pythonSources(useVenv)) {
+    const argvs = "argv" in source
+      ? [source.argv]
+      : (await whichAllAsync(source.lookup)).map((path) => [path]);
+    for (const argv of argvs) {
+      if (!firstTimeSeen(seen, argv)) continue;
+      tried.push(argv.join(" "));
+      if (await probePythonAsync(argv)) return argv;
+    }
+  }
+  throw noPythonError(tried);
 }
 
 /**
@@ -138,15 +254,35 @@ function resolvePython(useVenv: boolean): string[] {
  * 所以选中系统 python 时缓存只算暂定，venv 一出现就重算。重算最多发生一次
  * （venv 不会再变回不存在），不是每次调用都掏钱。
  */
-export function pythonCommand(): string[] {
+function cachedPython(): string[] | null {
   if (pythonCache && !pythonCacheFinal && venvPython()) pythonCache = null;
-  if (!pythonCache) {
-    pythonCache = resolvePython(true);
-    const venv = venvPython();
-    pythonCacheFinal = Boolean((process.env.OMNISCI_PYTHON || "").trim())
-      || (venv !== null && pythonCache[0] === venv);
-  }
   return pythonCache;
+}
+
+function rememberPython(argv: string[]): string[] {
+  pythonCache = argv;
+  const venv = venvPython();
+  pythonCacheFinal = Boolean((process.env.OMNISCI_PYTHON || "").trim())
+    || (venv !== null && argv[0] === venv);
+  return argv;
+}
+
+/** 跑 python 用的 argv 前缀，比如 `["/usr/bin/python3"]` 或者 `["py", "-3"]`。 */
+export function pythonCommand(): string[] {
+  return cachedPython() ?? rememberPython(resolvePython(true));
+}
+
+/**
+ * pythonCommand() 的异步版：同一套候选、同一份缓存，只是探测不堵事件循环。
+ *
+ * 桌面版的网关跟 HTTP 服务共用一条事件循环，同步探一次在 Windows 上要 1.3 秒
+ * （2026-08-25 实测），那 1.3 秒里所有请求都在排队，正好撞上浏览器加载首屏。
+ * CLI 那边是一次性进程，继续用上面那个同步的就行。
+ *
+ * 谁先算完谁填缓存，另一个直接命中；两边算出来的必然是同一个（配方是同一份）。
+ */
+export async function pythonCommandAsync(): Promise<string[]> {
+  return cachedPython() ?? rememberPython(await resolvePythonAsync(true));
 }
 
 /**
@@ -155,6 +291,12 @@ export function pythonCommand(): string[] {
  */
 export function basePythonCommand(): string[] {
   if (!basePythonCache) basePythonCache = resolvePython(false);
+  return basePythonCache;
+}
+
+/** basePythonCommand 的异步版，同样共用缓存。bootstrap 在事件循环上跑，要用这个。 */
+export async function basePythonCommandAsync(): Promise<string[]> {
+  if (!basePythonCache) basePythonCache = await resolvePythonAsync(false);
   return basePythonCache;
 }
 
