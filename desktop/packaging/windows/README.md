@@ -16,8 +16,8 @@ cd desktop\packaging\windows
 产物在 `desktop/packaging/windows/dist/`：
 
 ```text
-OmniScientist-0.1.0-windows-x64.zip
-OmniScientist-0.1.0-windows-x64.zip.sha256
+OmniSci-Desktop-Windows-x64.zip
+OmniSci-Desktop-Windows-x64.zip.sha256
 ```
 
 解压后运行：

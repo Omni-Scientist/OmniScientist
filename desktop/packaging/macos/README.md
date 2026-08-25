@@ -10,7 +10,7 @@ lets you quit it. The window is a web page served by a local process on
 meets Gatekeeper:
 
 ```bash
-curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniScientist-$(uname -m).tar.gz | tar -xz -C /Applications
+curl -fsSL -o /tmp/omni.zip https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip && ditto -x -k /tmp/omni.zip /Applications
 open /Applications/OmniScientist.app
 ```
 

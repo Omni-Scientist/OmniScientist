@@ -14,8 +14,8 @@ For the desktop app or the terminal agent, get the line for your machine at
 
 | File | What it is |
 |---|---|
-| `OmniScientist-*-windows-x64.zip`, `OmniScientist-macos-*.tar.gz`, `OmniScientist-linux-*.tar.gz` | Desktop workbench |
-| `omnisci-windows-x86_64.exe`, `omnisci-darwin-*`, `omnisci-linux-*` | Terminal agent |
+| `OmniSci-Desktop-Windows-x64.zip`, `OmniSci-Desktop-macOS.zip`, `OmniSci-Desktop-Linux-*.tar.gz` | Desktop workbench |
+| `omnisci-CLI-Windows-x64.zip`, `omnisci-CLI-macOS.tar.gz`, `omnisci-CLI-Linux-*.tar.gz` | Terminal agent |
 | `omnisci-skill.zip` | Skill, unpack into `~/.claude/skills/` |
 
 Verify with `sha256sum -c SHA256SUMS`.

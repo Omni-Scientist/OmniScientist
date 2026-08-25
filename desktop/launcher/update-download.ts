@@ -94,7 +94,7 @@ export async function downloadUpdate(
   // 先删。Bun.file().writer() 不截断，它从偏移 0 往上覆盖，旧文件比这次长的话
   // 尾巴会原样留着。而 sha256 算的是网络流不是盘上那个文件，于是校验照样通过，
   // 一个尾部挂着上一版残骸的文件被改名成最终产物，界面还报"已通过校验"。
-  // 产物名不带版本号（OmniScientist-macos-arm64.tar.gz），每次发版共用同一个
+  // 产物名不带版本号（OmniSci-Desktop-macOS.zip），每次发版共用同一个
   // .part 路径，断电或者强杀之后再下一个小一点的版本就会撞上。
   rmSync(partial, { force: true });
   const sink = Bun.file(partial).writer();

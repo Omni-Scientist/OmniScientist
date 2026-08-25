@@ -49,7 +49,11 @@ $DesktopRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $RepoRoot = (Resolve-Path (Join-Path $DesktopRoot "..")).Path
 $Out = [IO.Path]::GetFullPath($Out)
 $Arch = $Target -replace "^bun-windows-", ""
-$PackageName = "OmniScientist-$Version-windows-$Arch"
+# 包名不带版本号：release 里所有产物都不带，这样 releases/latest/download/<name>
+# 是一条永远有效的链接。以前只有这一个包带（脚本自己塞的），于是它成了唯一做不了
+# 直链的产物，assetPatternFor() 还得留一段可选的 -1.2.3 专门兜它。2026-08-25 统一。
+# 版本号仍然刻进 exe 的版本信息和 README.txt，只是不进文件名。
+$PackageName = "OmniSci-Desktop-Windows-$Arch"
 $WindowsVersion = Windows-Version $Version
 
 if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {

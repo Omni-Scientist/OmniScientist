@@ -3,7 +3,7 @@
 #
 #   ./build-linux.sh --binary ../../dist-desktop/omnisci-desktop --version 0.1.0 --out dist/
 #
-# Produces dist/OmniScientist-<version>-linux-<arch>.tar.gz containing the binary,
+# Produces dist/OmniSci-Desktop-Linux-<arch>.tar.gz containing the binary,
 # the desktop entry, the icon and install.sh.
 set -euo pipefail
 
@@ -24,7 +24,7 @@ done
 [ -f "$BINARY" ] || { echo "no such binary: $BINARY" >&2; exit 1; }
 [ -n "$ARCH" ] || ARCH=$(uname -m)
 
-NAME="OmniScientist-$VERSION-linux-$ARCH"
+NAME="OmniSci-Desktop-Linux-$ARCH"
 STAGE=$(mktemp -d)/$NAME
 mkdir -p "$STAGE" "$OUT"
 

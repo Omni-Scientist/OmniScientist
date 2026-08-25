@@ -4,7 +4,7 @@
 #
 #   ./build-app.sh --binary path/to/omnisci-desktop-darwin-arm64 --version 0.1.0 --out dist/
 #     -> dist/OmniScientist.app
-#        dist/OmniScientist-0.1.0-arm64.tar.gz
+#        dist/OmniSci-Desktop-macOS.zip
 #
 #   ./build-app.sh --binary <arm64> --binary-x64 <x64> --universal --version 0.1.0
 #     -> one bundle that runs on both, at roughly twice the size.
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-BINARY="" BINARY_X64="" VERSION="0.0.0" OUT="$HERE/dist" HOST="" UNIVERSAL=0 SKIP_TAR=0
+BINARY="" BINARY_X64="" VERSION="0.0.0" OUT="$HERE/dist" HOST="" UNIVERSAL=0 SKIP_ARCHIVE=0
 MIN_MACOS="12.0"
 
 while [ $# -gt 0 ]; do
@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
     --out)        OUT="$2"; shift 2 ;;
     --host)       HOST="$2"; shift 2 ;;   # prebuilt menu-bar host, otherwise compiled here
     --universal)  UNIVERSAL=1; shift ;;
-    --no-tar)     SKIP_TAR=1; shift ;;
+    --no-tar|--no-archive) SKIP_ARCHIVE=1; shift ;;   # --no-tar kept: it predates the switch to zip
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -142,23 +142,30 @@ codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/  /'
 
 echo "wrote $APP"
 
-# -------------------------------------------------------------------- tarball
-if [ "$SKIP_TAR" = "1" ]; then
+# -------------------------------------------------------------------- archive
+if [ "$SKIP_ARCHIVE" = "1" ]; then
   exit 0
 fi
 
-TARBALL="$OUT/OmniScientist-$VERSION-$ARCH_LABEL.tar.gz"
-rm -f "$TARBALL"
-# COPYFILE_DISABLE stops bsdtar writing ._ AppleDouble members, which otherwise
-# land in /Applications next to the bundle and confuse Finder.
-( cd "$OUT" && COPYFILE_DISABLE=1 tar -czf "$TARBALL" OmniScientist.app )
+# zip, not tar.gz: a .app is what macOS users expect to double-click, and zip is
+# what Apple's own docs hand out for one. ditto is the only packer that reliably
+# keeps a bundle's signature and resource forks intact; plain `zip` happens to work
+# too, but ditto is the documented path, so use it.
+#
+# The name carries neither version nor architecture on purpose. Every asset in the
+# release is named this way so that releases/latest/download/<name> stays a link
+# that never has to be edited. Only arm64 is built (decided 2026-08-18), so there
+# is nothing for an architecture suffix to disambiguate.
+ARCHIVE="$OUT/OmniSci-Desktop-macOS.zip"
+rm -f "$ARCHIVE"
+( cd "$OUT" && ditto -c -k --keepParent OmniScientist.app "$ARCHIVE" )
 
-# The tarball is the artefact users actually run, so verify the signature after a
-# round trip rather than trusting that tar preserved everything.
+# The archive is the artefact users actually run, so verify the signature after a
+# round trip rather than trusting that the packer preserved everything.
 CHECK=$(mktemp -d)
-tar -xzf "$TARBALL" -C "$CHECK"
+ditto -x -k "$ARCHIVE" "$CHECK"
 if codesign --verify --deep --strict --verbose=2 "$CHECK/OmniScientist.app" 2>&1 | sed 's/^/  /'; then
-  echo "signature survives the tar round trip"
+  echo "signature survives the zip round trip"
 else
   echo "FAILED: the signature does not survive packing" >&2
   rm -rf "$CHECK"
@@ -166,11 +173,11 @@ else
 fi
 for binary in omnisci-desktop OmniScientist; do
   [ -x "$CHECK/OmniScientist.app/Contents/MacOS/$binary" ] || {
-    echo "FAILED: $binary lost its executable bit in the tarball" >&2
+    echo "FAILED: $binary lost its executable bit in the archive" >&2
     rm -rf "$CHECK"
     exit 1
   }
 done
 rm -rf "$CHECK"
 
-echo "wrote $TARBALL ($(du -h "$TARBALL" | cut -f1))"
+echo "wrote $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"

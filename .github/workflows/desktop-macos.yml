@@ -113,8 +113,10 @@ jobs:
           # names drift from the released ones the check stops checking the
           # thing that ships.
           mkdir -p out
-          cp dist-arm64/OmniScientist-*-arm64.tar.gz   out/OmniScientist-macos-arm64.tar.gz
-          cp dist-x86_64/OmniScientist-*-x86_64.tar.gz out/OmniScientist-macos-x86_64.tar.gz
+          # build-app.sh 现在固定产出 OmniSci-Desktop-macOS.zip（名字不带架构，
+          # 因为发行版只出 arm64）。这个工作流是双架构验证用的，所以在这儿按架构改名。
+          cp dist-arm64/OmniSci-Desktop-macOS.zip   out/OmniSci-Desktop-macOS-arm64.zip
+          cp dist-x86_64/OmniSci-Desktop-macOS.zip  out/OmniSci-Desktop-macOS-x86_64.zip
           ls -la out
 
       - name: Verify what we are about to ship
@@ -122,7 +124,7 @@ jobs:
         run: |
           for arch in arm64 x86_64; do
             work=$(mktemp -d)
-            tar -xzf "out/OmniScientist-macos-$arch.tar.gz" -C "$work"
+            ditto -x -k "out/OmniSci-Desktop-macOS-$arch.zip" "$work"
             app="$work/OmniScientist.app"
             codesign --verify --deep --strict --verbose=2 "$app"
             plutil -lint "$app/Contents/Info.plist"
@@ -139,7 +141,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: OmniScientist-macos
-          path: desktop/packaging/macos/out/*.tar.gz
+          path: desktop/packaging/macos/out/*.zip
           if-no-files-found: error
 
 # There used to be a "gh release upload" step here, gated on

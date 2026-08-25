@@ -44,7 +44,21 @@ case "$arch" in
   *) die "没有 $arch 架构的构建。可以从源码编译，见 docs/INSTALL.md" ;;
 esac
 
-asset="omnisci-$os-$arch"
+# 名字跟 release.yml 的产物名、assetPatternFor() 是同一套：一律不带版本号
+# （这样 latest/download 是永远有效的链接），一律用人话不用 uname 的黑话。
+# check_parity.py 会盯着这三处别漂。
+if [ "$os" = "darwin" ]; then
+  # Intel Mac 不发（决定于 2026-08-18）。以前这里会去下一个不存在的名字拿 404，
+  # 改名之后所有 Mac 都会命中同一个包，那是个 arm64 的二进制，装上也跑不了，
+  # 所以在这儿就说清楚，别让人装完才发现。
+  [ "$arch" = "arm64" ] || die "Intel Mac 没有预编译版本，只发 Apple 芯片（M1 及以后）。可以从源码编译，见 docs/INSTALL.md"
+  asset="omnisci-CLI-macOS.tar.gz"
+elif [ "$arch" = "arm64" ]; then
+  asset="omnisci-CLI-Linux-ARM64.tar.gz"
+else
+  asset="omnisci-CLI-Linux-x64.tar.gz"
+fi
+
 if [ "$VERSION" = "latest" ]; then
   base="https://github.com/$REPO/releases/latest/download"
 else
@@ -55,7 +69,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 say "下载 $asset ..."
-fetch "$base/$asset" "$tmp/omnisci" \
+fetch "$base/$asset" "$tmp/$asset" \
   || die "下载失败。确认 $REPO 有已发布的 release，或用 VERSION=vX.Y.Z 指定一个版本"
 
 # 校验和是可选的：release 里有就核，没有也不拦着装，但要说清楚跳过了。
@@ -65,9 +79,9 @@ if fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null; then
   want=$(awk -v want="$asset" '{ name = $2; sub(/^\*/, "", name); if (name == want) { print $1; exit } }' \
            "$tmp/SHA256SUMS")
   if command -v sha256sum >/dev/null 2>&1; then
-    got=$(sha256sum "$tmp/omnisci" | awk '{print $1}')
+    got=$(sha256sum "$tmp/$asset" | awk '{print $1}')
   elif command -v shasum >/dev/null 2>&1; then
-    got=$(shasum -a 256 "$tmp/omnisci" | awk '{print $1}')
+    got=$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')
   else
     got=""
   fi
@@ -85,6 +99,12 @@ if fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null; then
 else
   say "这个 release 没带校验和，跳过校验"
 fi
+
+# 以前挂上去的是裸二进制，直接就是要装的那个文件。现在是 tar.gz：100MB 不压缩
+# 太浪费，而且一个没有扩展名的文件谁也不知道该拿它怎么办（omnisci-darwin-arm64
+# 在 v0.1.5 只被下载了 3 次，全场垫底）。**先验校验和再解包**，顺序不能反。
+tar -xzf "$tmp/$asset" -C "$tmp" || die "解压失败，下载的包可能不完整"
+[ -f "$tmp/omnisci" ] || die "包里没有 omnisci，release 的产物可能不对"
 
 chmod 0755 "$tmp/omnisci"
 

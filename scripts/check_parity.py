@@ -214,24 +214,33 @@ must_not_match(
     "更新检查只报告，下载和替换是用户自己的决定",
 )
 
-# 更新提示要给下载链接和 sha256，就得认得出 release 里挂的产物名。那些名字由工作流拼，
-# 三个平台三个规则（Windows 的带版本号、macOS 那段叫 macos 不叫 darwin），改了名字而
-# 这边没跟上，提示就退化成一句光秃秃的"有新版本"，校验和链接永远不出现。
+# 更新提示要给下载链接和 sha256，就得认得出 release 里挂的产物名。名字在 2026-08-25
+# 统一过：一律 <产品>-<平台>[-<架构>].<扩展名>，一律不带版本号，一律用人话。改了名字
+# 而这边没跟上，提示就退化成一句光秃秃的"有新版本"，校验和链接永远不出现。
 for token, where, why in (
-    ("OmniScientist-macos-", ".github/workflows/release.yml", "macOS 桌面包名"),
-    ("OmniScientist-linux-", ".github/workflows/release.yml", "Linux 桌面包名"),
-    ("omnisci-windows-x86_64.exe", ".github/workflows/release.yml", "Windows CLI 产物名"),
-    ("OmniScientist-$Version-windows-$Arch",
-     "desktop/packaging/windows/build-windows.ps1", "Windows 桌面包名带版本号"),
+    ("OmniSci-Desktop-macOS.zip", ".github/workflows/release.yml", "macOS 桌面包名"),
+    ("OmniSci-Desktop-Linux-", ".github/workflows/release.yml", "Linux 桌面包名"),
+    ("omnisci-CLI-Windows-x64.zip", ".github/workflows/release.yml", "Windows CLI 产物名"),
+    ("OmniSci-Desktop-Windows-$Arch",
+     "desktop/packaging/windows/build-windows.ps1", "Windows 桌面包名"),
 ):
     must_contain(where, token, "update.ts 的产物匹配是照着这个名字写的：%s" % why)
 
 for token, why in (
-    ('? "macos" : "linux"', "桌面包里 macOS 那段叫 macos，不是 process.platform 的 darwin"),
-    (r"-windows-x64\\.zip", "Windows 桌面包是 zip，架构段是 x64"),
-    (r"(?:-\d[\w.]*)?", "Windows 包名中间那截版本号要能跳过"),
+    ('"omnisci-CLI" : "OmniSci-Desktop"', "两条产品线的前缀"),
+    ("-Windows-x64.zip", "Windows 两个包都是 zip，架构段是 x64"),
+    ("-macOS.tar.gz", "macOS 的 CLI 是 tar.gz"),
+    ("-macOS.zip", "macOS 的桌面版是 zip"),
+    ('"ARM64" : "x64"', "Linux 架构段用人话，不是 uname 的 aarch64/x86_64"),
 ):
     must_contain("cli/src/update.ts", token, why)
+
+# 名字里不许再出现版本号。2026-08-25 之前只有 Windows 桌面包带，那一个例外让它成了
+# 唯一做不了 latest/download 直链的产物，update.ts 还得留一段可选正则去兜。
+must_not_match(
+    "cli/src/update.ts", r"\(\?:-\\d",
+    "产物名一律不带版本号，不该再有「跳过版本号」的可选正则",
+)
 
 # ---------------------------------------------------------------------------
 # 安装脚本能拼出来的产物名，release 必须真的构建
@@ -246,14 +255,14 @@ _release_body = read(".github/workflows/release.yml") or ""
 _matrix_lines = [ln for ln in _release_body.splitlines() if re.search(r"^\s*- \{ runner:", ln)]
 _matrix = "\n".join(_matrix_lines)
 
-# Intel Mac（omnisci-darwin-x86_64 / OmniScientist-macos-x86_64.tar.gz）**有意不发**，
-# 2026-08-18 定的。所以它不在下面这张名单里：install.sh 在 Intel Mac 上照样会拼出
-# 那个名字并拿到 404，那是已知取舍，不是这个脚本该拦的东西。
+# Intel Mac **有意不发**，2026-08-18 定的。改名之后所有 Mac 都会命中同一个
+# omnisci-CLI-macOS.tar.gz，那是个 arm64 的二进制，所以 install.sh 现在在 Intel Mac 上
+# 直接报错说清楚，而不是让人装完才发现跑不了。
 for asset, why in (
-    ("asset: omnisci-linux-x86_64", "install.sh 的 Linux x86_64"),
-    ("asset: omnisci-linux-arm64", "install.sh 的 Linux arm64"),
-    ("asset: omnisci-darwin-arm64", "install.sh 的 Apple silicon"),
-    ("asset: omnisci-windows-x86_64.exe", "install.ps1（ARM64 也回落到这个）"),
+    ("asset: omnisci-CLI-Linux-x64.tar.gz", "install.sh 的 Linux x64"),
+    ("asset: omnisci-CLI-Linux-ARM64.tar.gz", "install.sh 的 Linux ARM64"),
+    ("asset: omnisci-CLI-macOS.tar.gz", "install.sh 的 Apple silicon"),
+    ("asset: omnisci-CLI-Windows-x64.zip", "install.ps1（ARM64 也回落到这个）"),
 ):
     checked += 1
     if asset not in _matrix:

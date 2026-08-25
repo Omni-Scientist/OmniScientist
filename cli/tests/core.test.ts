@@ -788,31 +788,40 @@ describe("版本检查", () => {
     const hit = (p: string, a: string, k: "cli" | "desktop", name: string) =>
       assetPatternFor(p, a, k).test(name);
 
-    expect(hit("darwin", "arm64", "cli", "omnisci-darwin-arm64")).toBe(true);
-    expect(hit("darwin", "x64", "cli", "omnisci-darwin-x86_64")).toBe(true);
-    expect(hit("linux", "x64", "cli", "omnisci-linux-x86_64")).toBe(true);
-    expect(hit("win32", "x64", "cli", "omnisci-windows-x86_64.exe")).toBe(true);
+    expect(hit("darwin", "arm64", "cli", "omnisci-CLI-macOS.tar.gz")).toBe(true);
+    expect(hit("linux", "x64", "cli", "omnisci-CLI-Linux-x64.tar.gz")).toBe(true);
+    expect(hit("linux", "arm64", "cli", "omnisci-CLI-Linux-ARM64.tar.gz")).toBe(true);
+    expect(hit("win32", "x64", "cli", "omnisci-CLI-Windows-x64.zip")).toBe(true);
 
-    expect(hit("darwin", "arm64", "desktop", "OmniScientist-macos-arm64.tar.gz")).toBe(true);
-    expect(hit("darwin", "x64", "desktop", "OmniScientist-macos-x86_64.tar.gz")).toBe(true);
-    expect(hit("linux", "x64", "desktop", "OmniScientist-linux-x86_64.tar.gz")).toBe(true);
-    // Windows 的包名里带版本号，另外两个平台不带，同一条规则要都认。
-    expect(hit("win32", "x64", "desktop", "OmniScientist-0.1.0-windows-x64.zip")).toBe(true);
-    expect(hit("win32", "x64", "desktop", "OmniScientist-1.12.3-windows-x64.zip")).toBe(true);
+    expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-macOS.zip")).toBe(true);
+    expect(hit("linux", "x64", "desktop", "OmniSci-Desktop-Linux-x64.tar.gz")).toBe(true);
+    expect(hit("linux", "arm64", "desktop", "OmniSci-Desktop-Linux-ARM64.tar.gz")).toBe(true);
+    expect(hit("win32", "x64", "desktop", "OmniSci-Desktop-Windows-x64.zip")).toBe(true);
 
-    // 别把别的架构、别的平台的包认成自己的。
-    expect(hit("darwin", "arm64", "desktop", "OmniScientist-macos-x86_64.tar.gz")).toBe(false);
-    expect(hit("darwin", "arm64", "desktop", "OmniScientist-linux-arm64.tar.gz")).toBe(false);
-    expect(hit("darwin", "arm64", "cli", "omnisci-darwin-arm64.sha256")).toBe(false);
-    expect(hit("linux", "arm64", "desktop", "OmniScientist-linux-x86_64.tar.gz")).toBe(false);
+    // 别把别的架构、别的平台、别条产品线的包认成自己的。
+    expect(hit("linux", "arm64", "desktop", "OmniSci-Desktop-Linux-x64.tar.gz")).toBe(false);
+    expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-Linux-ARM64.tar.gz")).toBe(false);
+    expect(hit("darwin", "arm64", "cli", "OmniSci-Desktop-macOS.zip")).toBe(false);
+    expect(hit("darwin", "arm64", "desktop", "omnisci-CLI-macOS.tar.gz")).toBe(false);
+    expect(hit("darwin", "arm64", "cli", "omnisci-CLI-macOS.tar.gz.sha256")).toBe(false);
+
+    // 名字里一律不带版本号。带了的一概不认，否则 2026-08-25 之前那种
+    // 「只有 Windows 包带版本号」的不一致会悄悄回来。
+    expect(hit("win32", "x64", "desktop", "OmniSci-Desktop-0.1.6-Windows-x64.zip")).toBe(false);
+    expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-0.1.6-macOS.zip")).toBe(false);
+
+    // 桌面版 macOS 是 zip，CLI 是 tar.gz，别串了。
+    expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-macOS.tar.gz")).toBe(false);
+    expect(hit("darwin", "arm64", "cli", "omnisci-CLI-macOS.zip")).toBe(false);
   });
 
   test("挑中平台对应的资产，校验和指向那一个 SHA256SUMS", async () => {
     // 这个名字照着 release.yml 写死，只为验证挑中的是本机那个包。
-    const cpu = process.arch === "arm64" ? "arm64" : "x86_64";
     const mine = process.platform === "win32"
-      ? "OmniScientist-0.1.0-windows-x64.zip"
-      : `OmniScientist-${process.platform === "darwin" ? "macos" : "linux"}-${cpu}.tar.gz`;
+      ? "OmniSci-Desktop-Windows-x64.zip"
+      : process.platform === "darwin"
+        ? "OmniSci-Desktop-macOS.zip"
+        : `OmniSci-Desktop-Linux-${process.arch === "arm64" ? "ARM64" : "x64"}.tar.gz`;
 
     // 让一次成功的查询落地，会把 latest 记进 ~/.omnisci/update-check.json，
     // 跑完测试命令行就会整天喊"有新版本 9.9.9"。存下来，跑完放回去。
@@ -824,7 +833,7 @@ describe("版本检查", () => {
       tag_name: "v9.9.9",
       html_url: "https://example.invalid/rel",
       assets: [
-        { name: "omnisci-linux-x86_64", browser_download_url: "https://example.invalid/other" },
+        { name: "omnisci-CLI-Linux-x64.tar.gz", browser_download_url: "https://example.invalid/other" },
         { name: "SHA256SUMS", browser_download_url: "https://example.invalid/SHA256SUMS" },
         { name: mine, browser_download_url: "https://example.invalid/pkg" },
       ],

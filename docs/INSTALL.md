@@ -78,9 +78,10 @@ what would help most is: does `omnisci --help` run, does the skill land under
 
 ### Without the installer
 
-Download `omnisci-<os>-<arch>` from
-[Releases](https://github.com/Omni-Scientist/OmniScientist/releases), `chmod +x` it,
-and put it on your `PATH`. That is the whole install.
+Download `omnisci-CLI-macOS.tar.gz`, `omnisci-CLI-Linux-x64.tar.gz`,
+`omnisci-CLI-Linux-ARM64.tar.gz` or `omnisci-CLI-Windows-x64.zip` from
+[Releases](https://github.com/Omni-Scientist/OmniScientist/releases), unpack it,
+`chmod +x` the `omnisci` inside, and put it on your `PATH`. That is the whole install.
 
 ### Credentials
 
@@ -118,8 +119,9 @@ already use.
 ### macOS
 
 ```bash
-curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniScientist-macos-arm64.tar.gz \
-  | tar -xz -C /Applications
+curl -fsSL -o /tmp/OmniSci-Desktop-macOS.zip \
+  https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip
+ditto -x -k /tmp/OmniSci-Desktop-macOS.zip /Applications
 ```
 
 Then open it from Launchpad or Applications. A menu-bar icon appears; the browser
@@ -138,8 +140,8 @@ run on macOS has not been done.
 ### Linux
 
 ```bash
-curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniScientist-linux-x86_64.tar.gz | tar -xz
-cd OmniScientist-*-linux-*
+curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.tar.gz | tar -xz
+cd OmniSci-Desktop-Linux-*
 ./install.sh          # per-user, no root; adds a menu entry and an icon
 ```
 
@@ -148,7 +150,7 @@ Then launch it from the application menu, or run `omnisci-desktop`. `./install.s
 
 ### Windows
 
-Download `OmniScientist-<version>-windows-x64.zip` from the release, unzip it, and
+Download `OmniSci-Desktop-Windows-x64.zip` from the release, unzip it, and
 run `install.ps1`:
 
 ```powershell

@@ -29,8 +29,15 @@ jobs:
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           fi
 
-  # 产物名里不带版本号，这样 releases/latest/download/<name> 是一条永远有效的
-  # 链接，install.sh 和文档都不用跟着每次发版改。
+  # 产物名一律不带版本号，这样 releases/latest/download/<name> 是一条永远有效的
+  # 链接，install.sh 和文档都不用跟着每次发版改。以前只有 Windows 桌面包例外
+  # （它由 desktop-windows.yml 单独打，脚本自己往名字里塞了版本号），于是那一个
+  # 包没法做直链，assetPatternFor() 还得留一段可选的 -1.2.3 去兜它。2026-08-25
+  # 统一掉了：全都不带。
+  #
+  # 名字也一律用人话而不是 uname 的黑话。omnisci-darwin-arm64 要求用户同时知道
+  # darwin 是 macOS、arm64 是 M 系芯片、没后缀的是可执行文件，四个知识点才点得对
+  # 一个链接，结果它在 v0.1.5 只被下载了 3 次，是全场垫底。
   #
   # 一律用原生 runner 编。CLI 依赖 @resvg/resvg-js 这个原生模块，交叉编译能编出
   # 文件，但塞进去的 .node 是宿主架构的，而它是懒加载的：只有渲染公式那一刻才炸。
@@ -42,10 +49,10 @@ jobs:
         include:
           # Intel Mac 不发（决定于 2026-08-18）。install.sh 在 Intel Mac 上仍会去下
           # omnisci-darwin-x86_64 并拿到 404，这是明知的取舍，不是漏了。
-          - { runner: ubuntu-latest,    asset: omnisci-linux-x86_64 }
-          - { runner: ubuntu-24.04-arm, asset: omnisci-linux-arm64 }
-          - { runner: macos-latest,     asset: omnisci-darwin-arm64 }
-          - { runner: windows-latest,   asset: omnisci-windows-x86_64.exe }
+          - { runner: ubuntu-latest,    bin: omnisci,     asset: omnisci-CLI-Linux-x64.tar.gz }
+          - { runner: ubuntu-24.04-arm, bin: omnisci,     asset: omnisci-CLI-Linux-ARM64.tar.gz }
+          - { runner: macos-latest,     bin: omnisci,     asset: omnisci-CLI-macOS.tar.gz }
+          - { runner: windows-latest,   bin: omnisci.exe, asset: omnisci-CLI-Windows-x64.zip }
     runs-on: ${{ matrix.runner }}
     # ARM Linux runner 在私有仓库上不免费，缺了不该拖垮整个发布
     continue-on-error: ${{ matrix.runner == 'ubuntu-24.04-arm' }}
@@ -70,22 +77,36 @@ jobs:
         working-directory: cli
         run: |
           bun build --compile --minify --define 'process.env.DEV="false"' \
-            src/cli.tsx --outfile "dist/${{ matrix.asset }}"
+            src/cli.tsx --outfile "dist/${{ matrix.bin }}"
 
       # Apple Silicon 上内核拒绝执行没签名的可执行文件。ad-hoc 签名免费、与
       # Gatekeeper 无关（curl 下载的文件不带隔离属性，根本不会被问）。
       - name: ad-hoc 签名
         if: runner.os == 'macOS'
         working-directory: cli
-        run: codesign --force --sign - "dist/${{ matrix.asset }}"
+        run: codesign --force --sign - "dist/${{ matrix.bin }}"
 
       - name: 自检：旁边什么都没有也要能跑
         if: runner.os != 'Windows'
         shell: bash
         working-directory: cli
         run: |
-          tmp=$(mktemp -d); cp "dist/${{ matrix.asset }}" "$tmp/omnisci"
+          tmp=$(mktemp -d); cp "dist/${{ matrix.bin }}" "$tmp/omnisci"
           ( cd "$tmp" && HOME="$tmp/home" ./omnisci --help | head -1 )
+
+      # CLI 以前是裸二进制直接挂上去：100MB 不压缩，而且没有扩展名。打包之后
+      # 下载量最大的 Windows 那份从 101MB 降到 40MB 出头，Unix 那几份同理。
+      # Unix 用 tar.gz 不用 zip，是因为 tar 天然保执行位，不依赖解压工具的实现。
+      - name: 打包
+        shell: bash
+        working-directory: cli/dist
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip -mx=9 "${{ matrix.asset }}" "${{ matrix.bin }}" >/dev/null
+          else
+            tar czf "${{ matrix.asset }}" "${{ matrix.bin }}"
+          fi
+          ls -lh "${{ matrix.asset }}"
 
       - name: 校验和
         shell: bash
@@ -110,9 +131,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    os: linux,  arch: x86_64 }
-          - { runner: ubuntu-24.04-arm, os: linux,  arch: arm64 }
-          - { runner: macos-latest,     os: macos,  arch: arm64 }
+          - { runner: ubuntu-latest,    os: linux,  arch: x86_64, label: x64 }
+          - { runner: ubuntu-24.04-arm, os: linux,  arch: arm64,  label: ARM64 }
+          - { runner: macos-latest,     os: macos,  arch: arm64,  label: macOS }
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.runner == 'ubuntu-24.04-arm' }}
     steps:
@@ -132,15 +153,19 @@ jobs:
         if: matrix.os == 'linux'
         working-directory: desktop
         run: |
+          # 传人话的架构标签（x64 / ARM64），build-linux.sh 直接产出最终名字，
+          # 连同包内的目录名一起，省掉一次改名，也让文档里那句 cd 不会骗人。
           ./packaging/linux/build-linux.sh --binary dist-desktop/omnisci-desktop \
-            --version "${{ needs.version.outputs.value }}" --arch "${{ matrix.arch }}" --out staging
+            --version "${{ needs.version.outputs.value }}" --arch "${{ matrix.label }}" --out staging
           mkdir -p artifacts
-          mv staging/*.tar.gz "artifacts/OmniScientist-linux-${{ matrix.arch }}.tar.gz"
-          ( cd artifacts && sha256sum "OmniScientist-linux-${{ matrix.arch }}.tar.gz" \
-              > "OmniScientist-linux-${{ matrix.arch }}.tar.gz.sha256" )
+          mv staging/*.tar.gz artifacts/
+          ( cd artifacts && sha256sum "OmniSci-Desktop-Linux-${{ matrix.label }}.tar.gz" \
+              > "OmniSci-Desktop-Linux-${{ matrix.label }}.tar.gz.sha256" )
 
-      # .app 外壳、菜单栏宿主、ad-hoc 签名和 tar 往返校验都在 build-app.sh 里，
-      # 那套在真机 macOS 15.7.7 / M3 上验收过。
+      # .app 外壳、菜单栏宿主、ad-hoc 签名和打包往返校验都在 build-app.sh 里，
+      # 那套在真机 macOS 15.7.7 / M3 上验收过。包是 zip 不是 tar.gz：.app 双击是
+      # Mac 用户的预期，zip 也是 Apple 文档里发 .app 的形式，签名和执行位都实测
+      # 扛得住往返（build-app.sh 自己会验，验不过就让构建失败）。
       - name: 打 macOS 应用
         if: matrix.os == 'macos'
         working-directory: desktop
@@ -148,9 +173,9 @@ jobs:
           ./packaging/macos/build-app.sh --binary dist-desktop/omnisci-desktop \
             --version "${{ needs.version.outputs.value }}" --out staging
           mkdir -p artifacts
-          mv staging/*.tar.gz "artifacts/OmniScientist-macos-${{ matrix.arch }}.tar.gz"
-          ( cd artifacts && shasum -a 256 "OmniScientist-macos-${{ matrix.arch }}.tar.gz" \
-              > "OmniScientist-macos-${{ matrix.arch }}.tar.gz.sha256" )
+          mv staging/OmniSci-Desktop-macOS.zip artifacts/
+          ( cd artifacts && shasum -a 256 OmniSci-Desktop-macOS.zip \
+              > OmniSci-Desktop-macOS.zip.sha256 )
 
       - uses: actions/upload-artifact@v4
         with:
@@ -209,12 +234,12 @@ jobs:
         run: |
           missing=0
           for asset in \
-            omnisci-linux-x86_64 \
-            omnisci-darwin-arm64 \
-            omnisci-windows-x86_64.exe \
+            omnisci-CLI-Linux-x64.tar.gz \
+            omnisci-CLI-macOS.tar.gz \
+            omnisci-CLI-Windows-x64.zip \
             omnisci-skill.zip \
-            OmniScientist-linux-x86_64.tar.gz \
-            OmniScientist-macos-arm64.tar.gz
+            OmniSci-Desktop-Linux-x64.tar.gz \
+            OmniSci-Desktop-macOS.zip
           do
             if [ -f "release/$asset" ]; then
               echo "  有 $asset"
@@ -224,7 +249,7 @@ jobs:
             fi
           done
           # Linux ARM 允许缺席（runner 在私有仓库上不免费），缺了只提醒不拦。
-          for asset in omnisci-linux-arm64 OmniScientist-linux-arm64.tar.gz; do
+          for asset in omnisci-CLI-Linux-ARM64.tar.gz OmniSci-Desktop-Linux-ARM64.tar.gz; do
             [ -f "release/$asset" ] || echo "::warning::$asset 这次没出来（Linux ARM 允许缺席）"
           done
           exit $missing
@@ -243,7 +268,7 @@ jobs:
         run: |
           tag="${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.value) }}"
           for attempt in $(seq 1 20); do
-            if gh release download "$tag" --pattern 'OmniScientist-*-windows-x64.zip' --dir win 2>/dev/null; then
+            if gh release download "$tag" --pattern 'OmniSci-Desktop-Windows-x64.zip' --dir win 2>/dev/null; then
               ( cd win && sha256sum -- *.zip >> ../release/SHA256SUMS )
               sort -k2 -o release/SHA256SUMS release/SHA256SUMS
               rm -rf win

@@ -33,7 +33,10 @@ if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
   Write-Host 'Windows ARM64：装 x64 版本，由系统模拟执行。'
 }
 
-$asset = "omnisci-windows-$arch.exe"
+# 名字跟 release.yml 的产物名、assetPatternFor() 是同一套：一律不带版本号，
+# 一律用人话。check_parity.py 会盯着这三处别漂。架构那一段固定 x64：上面已经
+# 把 ARM64 也映射过来了。
+$asset = 'omnisci-CLI-Windows-x64.zip'
 $base  = if ($Version -eq 'latest') {
   "https://github.com/$Repo/releases/latest/download"
 } else {
@@ -44,8 +47,9 @@ $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomF
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
   Write-Host "下载 $asset ..."
+  $pkg = Join-Path $tmp $asset
   $exe = Join-Path $tmp 'omnisci.exe'
-  Invoke-WebRequest -Uri "$base/$asset" -OutFile $exe -UseBasicParsing
+  Invoke-WebRequest -Uri "$base/$asset" -OutFile $pkg -UseBasicParsing
 
   # 校验和可选：release 里有 SHA256SUMS 就核。所有产物的校验和都在这一个文件里，
   # 以前是每个产物旁边挂一个 .sha256，release 列表被撑成两倍长。
@@ -69,11 +73,16 @@ try {
     if (-not $want) {
       Write-Host "SHA256SUMS 里没有 ${asset}，跳过校验"
     } else {
-      $got = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+      $got = (Get-FileHash -Algorithm SHA256 $pkg).Hash.ToLower()
       if ($got -ne $want.ToLower()) { throw '校验和不匹配，下载的文件不对' }
       Write-Host '校验和通过'
     }
   }
+
+  # 以前挂上去的就是裸 exe，下下来直接装。现在是 zip：101MB 不压缩太浪费，
+  # 打包之后四十几 MB。**先验校验和再解包**，顺序不能反。
+  Expand-Archive -Path $pkg -DestinationPath $tmp -Force
+  if (-not (Test-Path $exe)) { throw "包里没有 omnisci.exe，release 的产物可能不对" }
 
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
   Move-Item -Force $exe (Join-Path $BinDir 'omnisci.exe')

@@ -92,23 +92,35 @@ export function compareVersions(a: string, b: string): number {
 /**
  * 这个平台该下哪个产物。
  *
- * 匹配而不是拼名字：release 里挂的名字不是一个规则出来的。CLI 那五个不带版本号
- * （omnisci-darwin-arm64），桌面的 Linux / macOS 包也不带（OmniScientist-macos-arm64.tar.gz），
- * 唯独 Windows 那个带（OmniScientist-0.1.0-windows-x64.zip，名字由 build-windows.ps1 拼）。
- * 之前这里是硬拼的，三个桌面平台里两个对不上，于是"有新版本"里永远没有下载链接和校验和。
- * check_parity 会拿工作流里真实的产物名回来对这几条。
+ * 名字在 2026-08-25 统一过一次，三条规矩：一律 `<产品>-<平台>[-<架构>].<扩展名>`，
+ * 一律**不带版本号**（这样 releases/latest/download/<name> 是永远有效的链接），
+ * 一律用人话而不是 uname 的黑话（macOS 不是 darwin，x64 不是 x86_64）。
+ *
+ * 在那之前是三套规则打架：CLI 是没有扩展名的裸二进制（omnisci-darwin-arm64），
+ * 桌面 Linux / macOS 包不带版本号，唯独桌面 Windows 包带（那个名字由
+ * build-windows.ps1 自己拼），所以这里以前得留一段可选的 `-1.2.3` 去兜它。
+ *
+ * 仍然返回正则而不是直接给字符串：调用方拿它去 release 的资产列表里找，匹配比
+ * 相等更禁得起将来再加东西。check_parity 会拿工作流里真实的产物名回来对这几条。
+ *
+ * **跨版本的一次性代价**：0.1.5 及更早的客户端里编译进去的是旧正则，它们在新名字
+ * 的资产列表里找不到匹配，"检查更新"会报找不到产物。手动去 release 页面下一次
+ * 之后就正常了。这是改名换来的，明知的取舍，不是漏了。
  */
 export function assetPatternFor(platform: string, arch: string, kind: "cli" | "desktop"): RegExp {
-  const cpu = arch === "arm64" ? "arm64" : "x86_64";
-  if (kind === "cli") {
-    if (platform === "win32") return /^omnisci-windows-x86_64\.exe$/;
-    return new RegExp(`^omnisci-${platform === "darwin" ? "darwin" : "linux"}-${cpu}$`);
+  const product = kind === "cli" ? "omnisci-CLI" : "OmniSci-Desktop";
+  let name: string;
+  if (platform === "win32") {
+    name = `${product}-Windows-x64.zip`;
+  } else if (platform === "darwin") {
+    // macOS 只出 arm64（2026-08-18 决定），所以名字里没有架构那一段。
+    // 桌面版是 zip（.app 双击是 Mac 用户的预期，也是 Apple 文档里发 .app 的形式），
+    // CLI 是 tar.gz（tar 天然保执行位，不依赖解压工具的实现）。
+    name = kind === "cli" ? `${product}-macOS.tar.gz` : `${product}-macOS.zip`;
+  } else {
+    name = `${product}-Linux-${arch === "arm64" ? "ARM64" : "x64"}.tar.gz`;
   }
-  // 中间那段可有可无的 `-1.2.3` 就是 Windows 包名里的版本号。
-  const version = String.raw`(?:-\d[\w.]*)?`;
-  if (platform === "win32") return new RegExp(`^OmniScientist${version}-windows-x64\\.zip$`);
-  const os = platform === "darwin" ? "macos" : "linux";
-  return new RegExp(`^OmniScientist${version}-${os}-${cpu}\\.tar\\.gz$`);
+  return new RegExp(`^${name.replace(/\./g, "\\.")}$`);
 }
 
 interface Release {
