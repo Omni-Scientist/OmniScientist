@@ -97,15 +97,34 @@ jobs:
       # CLI 以前是裸二进制直接挂上去：100MB 不压缩，而且没有扩展名。打包之后
       # 下载量最大的 Windows 那份从 101MB 降到 40MB 出头，Unix 那几份同理。
       # Unix 用 tar.gz 不用 zip，是因为 tar 天然保执行位，不依赖解压工具的实现。
-      - name: 打包
+      # Windows 走 .NET 的 ZipFile。不用 7z：那是 runner 碰巧预装的外部依赖，
+      # 普通 Windows 上没有（2026-08-25 在一台真机上确认过），CI 不该赌这个。
+      # 也不用 Compress-Archive：那是 PowerShell 5.1 自带的实现，
+      # desktop/packaging/windows/build-windows.ps1 的注释记着它打大 exe 会
+      # "Stream was not readable" 直接崩。ZipFile 是 Win10 起必有的组件，
+      # 那个脚本当初就是为同一个问题换过去的，这里跟它保持一致。
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: cli/dist
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $stage = Join-Path $PWD 'stage'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item '${{ matrix.bin }}' $stage
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            $stage, (Join-Path $PWD '${{ matrix.asset }}'),
+            [System.IO.Compression.CompressionLevel]::Optimal, $false)
+          Remove-Item -Recurse -Force $stage
+          Get-Item '${{ matrix.asset }}' | ForEach-Object { '{0}  {1:N1} MB' -f $_.Name, ($_.Length / 1MB) }
+
+      # Unix 用 tar.gz：tar 天然保执行位，不依赖解压工具的实现。
+      - name: 打包（macOS / Linux）
+        if: runner.os != 'Windows'
         shell: bash
         working-directory: cli/dist
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a -tzip -mx=9 "${{ matrix.asset }}" "${{ matrix.bin }}" >/dev/null
-          else
-            tar czf "${{ matrix.asset }}" "${{ matrix.bin }}"
-          fi
+          tar czf "${{ matrix.asset }}" "${{ matrix.bin }}"
           ls -lh "${{ matrix.asset }}"
 
       - name: 校验和

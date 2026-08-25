@@ -381,9 +381,17 @@ async function main(): Promise<number> {
       resume: { type: "string" },
       "verbose-standards": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
+      version: { type: "boolean", short: "v", default: false },
     },
     allowPositionals: true,
   });
+
+  // 产物名里不再带版本号（2026-08-25 统一的），所以这是用户确认自己装了哪一版的
+  // 唯一途径。桌面版一直有 --version，CLI 一直没有，补上。
+  if (values.version) {
+    out(`${VERSION}\n`);
+    return 0;
+  }
 
   if (values.help) {
     out(`用法: omnisci [选项] [一次性任务]
@@ -394,6 +402,8 @@ async function main(): Promise<number> {
       --auto-approve      关掉审批门（只在受控目录用）
       --resume <会话id>   续会话，缓存跟着续
       --verbose-standards 每轮打印生效的规矩
+  -v, --version           打印版本号
+  -h, --help              这段
 
 模型固定为 DeepSeek 官方 API 的 ${OMNI_MODEL}。
 `);
