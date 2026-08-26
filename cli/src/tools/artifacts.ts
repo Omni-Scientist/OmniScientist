@@ -5,19 +5,48 @@
  * 完整内容留在 ArtifactStore 里，不进上下文。
  */
 
+import { toolResultBudget } from "../context.ts";
 import type { Tool, ToolContext } from "./index.ts";
 
 const DEFAULT_CHUNK = 20_000;
 
+/**
+ * 同一个句柄总共最多续取多少。按窗口算，不写死。
+ *
+ * toolResultBudget 拦得住「一次大输出打满窗口」，拦不住「分二十次把同一份大输出
+ * 全搬进来」。2026-08-26 实测：模型对着一个大文件连着 read_more 五次、每次
+ * 20000 字符，把 131072 的窗口撑破，触发了强制压缩救援 —— 而那份内容本来就是
+ * 因为太大才被存进 artifact 的。
+ *
+ * 给到单条上限的三倍：翻两三页看清楚一个文件是正当需求，把整份大文件搬回上下文
+ * 不是 —— 那种事该用 grep 或者写脚本处理。
+ */
+function fetchCeiling(): number {
+  return toolResultBudget(60_000) * 3;
+}
+
 function readMore(args: Record<string, unknown>, ctx: ToolContext): string {
   const a = ctx.artifacts.get(String(args.handle));
   const offset = Number(args.offset ?? 0) || 0;
-  const limit = Number(args.limit ?? DEFAULT_CHUNK) || DEFAULT_CHUNK;
+  const chunkCap = Math.max(2_000, Math.min(toolResultBudget(60_000), DEFAULT_CHUNK));
+  const limit = Math.min(Number(args.limit ?? chunkCap) || chunkCap, chunkCap);
 
   if (offset >= a.content.length) {
     return `已经到结尾了。${a.handle} 共 ${a.content.length} 字符，offset ${offset} 越界。`;
   }
+
+  // 累计到顶就不再给了，并说清楚该改用什么办法 —— 只说「不行」模型只会换个 offset 再来。
+  const ceiling = fetchCeiling();
+  const already = ctx.artifacts.fetchedSoFar(a.handle);
+  if (already >= ceiling) {
+    return `${a.handle} 你已经取走 ${already} 字符了，占上下文太多，不再继续给。\n`
+      + `这份内容共 ${a.content.length} 字符，整份搬进对话里放不下，也没必要。\n`
+      + `改用别的办法从里面拿你要的：用 bash 跑 grep / sed / python 去筛，`
+      + `或者写个脚本统计，只把结论带回来。`;
+  }
+
   const slice = a.content.slice(offset, offset + limit);
+  ctx.artifacts.noteFetched(a.handle, slice.length);
   const end = offset + slice.length;
   const tail =
     end < a.content.length

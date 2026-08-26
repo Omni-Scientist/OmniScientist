@@ -8,8 +8,9 @@
 
 import { commandClasses } from "../guard.ts";
 import { safeChildEnvironment } from "../credentials.ts";
-import { shellCommand } from "../interpreters.ts";
+import { shellCommand, withPythonPath } from "../interpreters.ts";
 import type { Tool, ToolContext } from "./index.ts";
+import { toolResultBudget } from "../context.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -20,6 +21,7 @@ export function sanitizeForDisplay(s: string, limit = 300): string {
   const clean = s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "·");
   return clean.length > limit ? `${clean.slice(0, limit)}…（还有 ${clean.length - limit} 字符）` : clean;
 }
+// 同 fs.ts：这是大窗口下的上限，实际按当前模型窗口收窄。
 const MAX_OUTPUT = 30_000;
 
 async function bash(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
@@ -31,7 +33,7 @@ async function bash(args: Record<string, unknown>, ctx: ToolContext): Promise<st
 
   const proc = Bun.spawn([shellCommand(), "-c", command], {
     cwd: ctx.root,
-    env: safeChildEnvironment(),
+    env: withPythonPath(safeChildEnvironment()),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -67,7 +69,7 @@ async function bash(args: Record<string, unknown>, ctx: ToolContext): Promise<st
   let body = stdout;
   if (stderr.trim()) body += `${body ? "\n" : ""}[stderr]\n${stderr}`;
   // 超限不再直接砍掉，存成 artifact 留句柄，模型要细节自己 read_more
-  body = ctx.artifacts.truncate(`bash: ${command.slice(0, 60)}`, body, MAX_OUTPUT);
+  body = ctx.artifacts.truncate(`bash: ${command.slice(0, 60)}`, body, toolResultBudget(MAX_OUTPUT));
 
   if (exitCode !== 0) {
     // 非零退出如实带回给模型，不美化成成功

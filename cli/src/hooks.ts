@@ -31,7 +31,7 @@ import { resolve as resolvePath } from "node:path";
 
 import { expandHome, type GuardDecision } from "./guard.ts";
 import { safeChildEnvironment } from "./credentials.ts";
-import { shellCommand } from "./interpreters.ts";
+import { shellCommand, withPythonPath } from "./interpreters.ts";
 
 export const DEFAULT_SETTINGS_FILE = resolvePath(homedir(), ".omnisci/settings.json");
 
@@ -125,7 +125,7 @@ export async function runHook(hook: HookCommand, payload: HookPayload): Promise<
 
   const proc = Bun.spawn([shellCommand(), "-c", cmd], {
     cwd: payload.cwd,
-    env: safeChildEnvironment(),
+    env: withPythonPath(safeChildEnvironment()),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

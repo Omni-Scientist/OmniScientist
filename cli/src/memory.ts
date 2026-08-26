@@ -16,6 +16,7 @@ import { stringify as stringifyYaml } from "yaml";
 
 import type { ModelClient } from "./model.ts";
 import type { StandardsEngine } from "./standards.ts";
+import { sideRequestBudget } from "./context.ts";
 
 const EXTRACT_PROMPT = `从上面这段对话里挑出**值得长期记住的规矩**。
 
@@ -75,7 +76,7 @@ export async function extractLessons(
       return `${x.role}: ${typeof x.content === "string" ? x.content : "(工具调用)"}`;
     })
     .join("\n")
-    .slice(-40_000);
+    .slice(-sideRequestBudget());
 
   const turn = await model.streamTurn(
     [

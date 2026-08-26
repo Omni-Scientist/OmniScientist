@@ -3,8 +3,56 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { safeChildEnvironment } from "../credentials.ts";
-import { pythonCommand } from "../interpreters.ts";
+import { pythonCommand, withPythonPath } from "../interpreters.ts";
 import type { Tool, ToolContext } from "./index.ts";
+
+/**
+ * 给工具的原始报错补一句「那该怎么办」。
+ *
+ * 这些 CLI 报的是它自己那一层的事实（某个 DOI 查不到、某个数没进账本），
+ * 事实没错，但模型往往会顺着字面去改那个具体的值，而不是回头改做法。
+ * 2026-08-26 实测：DOI 查不到之后，30B 连着换了两个编的 DOI 再试，
+ * 它读成了「这个号写错了」，而不是「引用不能自己编」。
+ *
+ * 所以只在认得出的几种情况上追加一句可执行的指导，认不出就什么都不加 ——
+ * 宁可不说，也不要猜错了把模型带偏。
+ *
+ * 「一次只写一节」那条是量出来的，不是经验之谈：2026-08-27 拿同一个模型同一段上下文
+ * 各问一次，让它一次写五节，总共 815 词、平均每节 163 词；只让它写引言一节，
+ * 663 词。两次都是自然收尾，没有被输出上限截断。差四倍。
+ * 也就是说篇幅不够不是模型写不出来，是一次交付的节数太多、它把篇幅摊薄了。
+ */
+function hintFor(detail: string): string {
+  if (/DOI did not resolve|did not resolve through/i.test(detail)) {
+    return "\n\n[怎么办] 这个 DOI 在真实数据库里不存在，多半是自己写出来的。"
+      + "引用不能编，也不能凭记忆写：先跑 lit_cli.py search 拿到真实结果，"
+      + "把它输出的条目**原样**放进 picks.json（直接重定向或复制整条，不要改写字段）。";
+  }
+  if (/writing contract failed|prose words; expected|substantive paragraphs; expected/i.test(detail)) {
+    // 指名道姓点出第一个字数不够的节。只说「一次写一节」太笼统，模型不知道从哪下手，
+    // 结果还是把整篇重新生成一遍 —— 2026-08-27 实测：给了通用提示之后它照样一次写完
+    // 六节，每节 130 到 256 词，跟没提示时一模一样。
+    const short = /([A-Za-z][\w ]*?) has (\d+) prose words; expected (\d+)/.exec(detail);
+    const pick = short
+      ? `\n\n现在**只重写 ${short[1]} 这一个键**：它当前 ${short[2]} 词，至少要 ${short[3]} 词，`
+        + `也就是还要再写 ${Math.max(0, Number(short[3]) - Number(short[2]))} 词左右。`
+        + `sections.json 里其它键一个字都不要动，改完这一个键立刻编译，过了再挑下一个。`
+      : "";
+    return "\n\n[怎么办] 这是写作契约没满足，不是编译错误。两件事：\n"
+      + "1. 先跑一次 contract 子命令，把**这个领域的**写作要求原样读出来"
+      + "（每节几段、每段该讲什么、字数区间），照着它一段一段写。\n"
+      + "2. **一次只写一节，不要重新生成整篇。** 一次交五节的时候，每节都会被写得很短；"
+      + "单独写一节才写得开。做法是每次只替换 sections.json 里的一个键、其余原样保留，"
+      + "写完立刻编译看这一节过没过，过了再写下一节。\n"
+      + "在原文上小修小补通常补不上去 —— 缺的是整段内容，不是几个词。"
+      + pick;
+  }
+  if (/ungrounded number|not.{0,20}ledger|没有.{0,10}回执/i.test(detail)) {
+    return "\n\n[怎么办] 论文里出现了没有出处的数字。不要去改论文把数字删掉，"
+      + "回到分析脚本里把它打印出来、重新 record 一次，让它有据可查。";
+  }
+  return "";
+}
 
 export const OMNISCI_RECEIPT_PREFIX = "OmniSci-Receipt: ";
 const MAX_TOOL_MS = 610_000;
@@ -48,7 +96,7 @@ async function runCli(
 ): Promise<{ stdout: string; stderr: string }> {
   const proc = Bun.spawn([...pythonCommand(), omnisciBin(cli), ...argv], {
     cwd: ctx.root,
-    env: safeChildEnvironment(),
+    env: withPythonPath(safeChildEnvironment()),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -73,7 +121,7 @@ async function runCli(
   const [stdout, stderr, code] = result;
   if (code !== 0) {
     const detail = `${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`.trim().slice(-4000);
-    throw new Error(`${cli} 退出码 ${code}${detail ? `:\n${detail}` : ""}`);
+    throw new Error(`${cli} 退出码 ${code}${detail ? `:\n${detail}` : ""}${hintFor(detail)}`);
   }
   return { stdout, stderr };
 }
@@ -178,15 +226,37 @@ async function compile(args: Record<string, unknown>, ctx: ToolContext): Promise
   if (!statSync(sections).isFile()) throw new Error(`sections 不是文件: ${requested}`);
   const authors = String(args.authors ?? "Anonymous");
   const name = String(args.name ?? "paper");
-  const result = await runCli(
-    "paper_cli.py",
-    [
-      "compile", "--task", ctx.caseRoot, "--sections", sections, "--title", title,
-      "--authors", authors, "--name", name,
-    ],
-    ctx,
-    MAX_TOOL_MS,
-  );
+  let result;
+  try {
+    result = await runCli(
+      "paper_cli.py",
+      [
+        "compile", "--task", ctx.caseRoot, "--sections", sections, "--title", title,
+        "--authors", authors, "--name", name,
+      ],
+      ctx,
+      MAX_TOOL_MS,
+    );
+  } catch (e) {
+    // 写作契约没过的话，把契约原文一并给它。
+    //
+    // 契约细则（每节几段、每段该讲什么、字数区间）写在 skill 文档里，那份文档有
+    // 一万八千多字符，读完之后模型还要跑几十轮工具才轮到动笔，到那时细则早被埋在
+    // 历史深处了。它只好凭印象写，然后一轮轮试错。契约本来就有个命令能原样打出来，
+    // 失败的这一刻正是最该看的时候，替它跑一次比让它自己想起来要靠谱。
+    //
+    // 只在契约失败时跑，且拿不到就算了 —— 补充信息而已，不值得让主错误被它盖住。
+    const message = e instanceof Error ? e.message : String(e);
+    if (!/writing contract failed|prose words; expected/i.test(message)) throw e;
+    let spec = "";
+    try {
+      const c = await runCli("paper_cli.py", ["contract", "--task", ctx.caseRoot], ctx, 120_000);
+      spec = c.stdout.trim();
+    } catch { /* 拿不到就不给，别把真正的错误盖掉 */ }
+    throw spec
+      ? new Error(`${message}\n\n[这个领域的写作契约原文]\n${spec}`)
+      : e;
+  }
   const manifestPath = join(ctx.caseRoot, "host", `${name}.manifest.json`);
   if (!existsSync(manifestPath)) throw new Error("compile 成功返回，但 paper manifest 不存在");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PaperManifest;

@@ -20,7 +20,7 @@ import { parseArgs } from "node:util";
 
 import type { SessionUI } from "./ui.tsx";
 import { ApprovalPolicy, setAsker } from "./approval.ts";
-import { budgetOf, compact } from "./context.ts";
+import { budgetOf, compact, setContextLimit } from "./context.ts";
 import { checkCommand, commandClasses, describeConfig, loadGuardConfig } from "./guard.ts";
 import { loadHooks } from "./hooks.ts";
 import { AgentLoop, UNATTENDED_MAX_TURNS, type Presenter } from "./loop.ts";
@@ -438,6 +438,15 @@ async function main(): Promise<number> {
   const presenter = new TerminalPresenter(renderer);
   const engine = new StandardsEngine(values.standards ?? DEFAULT_STANDARDS_DIR);
   const model = new ModelClient({ provider, model: modelName });
+
+  // 问一次这个端点的真实窗口，用来算压缩的触发线。
+  // 默认那个 384k 是照 DeepSeek 量的，套在 --max-model-len 开成 64k 的自建部署上，
+  // 压缩永远不触发，历史一路涨到撑爆窗口（2026-08-26 实测撞到 65513/65536）。
+  // 问不到就沿用默认，最多是压缩晚一点，不影响别的。
+  const window = await model.discoverContextWindow();
+  if (window) setContextLimit(window);
+  if (window) model.raiseOutputBudgetFor(window);
+
   const policy = new ApprovalPolicy(values["auto-approve"]);
   const session = Session.open(join(OMNI_HOME, "sessions.db"), root, model.model, values.resume);
 
@@ -620,17 +629,58 @@ async function main(): Promise<number> {
     return result;
   }
 
+  // 末尾那段「没人在看」不是客套，是必需的。2026-08-26 实测：模型把计划列得很完整，
+  // 最后问一句「是否立即执行上述步骤？」就停下等回答，而无人值守模式下没有人能回答，
+  // 于是整场以「缺少交付物」收场，一个字的论文都没写。
+  /**
+   * 交付没齐时最多把模型推回去几次。
+   *
+   * 有上限是因为模型和检查器可能互相拉锯：它补一点、检查器报另一样缺的，来回耗光
+   * 预算。三次够覆盖「忘了编译」「忘了生成 manifest」这类真能补上的疏漏，
+   * 补不上就该如实报失败，而不是无限重试假装还有希望。
+   */
+  const UNATTENDED_MAX_PUSHES = 3;
+
   const oneShotTask = dataArg
-    ? `我的数据就在当前工作区 ${root}。请使用 omnisci skill 从检查数据开始，端到端产出一篇候选论文、PDF 或 Overleaf 包，并通过 gate。${taskWords.length ? `研究意图：${taskWords.join(" ")}` : "研究问题和方法请根据数据自行提出。"}`
+    ? `我的数据就在当前工作区 ${root}。请使用 omnisci skill 从检查数据开始，端到端产出一篇候选论文、PDF 或 Overleaf 包，并通过 gate。${taskWords.length ? `研究意图：${taskWords.join(" ")}` : "研究问题和方法请根据数据自行提出。"}\n\n`
+      + `这是无人值守运行：屏幕前没有人，你问任何问题都不会有人回答，停下来等确认就等于失败。`
+      + `不要征求同意，不要问「是否继续」，也不要只把计划列出来就交差。`
+      + `每一步都自己直接做完，一路做到 PDF 产出、gate 通过为止。\n\n`
+      + `写正文的时候一次只写一节，写完一节就编译一次，过了再写下一节。`
+      + `一口气生成整篇的话，每一节都会被写得太短而过不了字数要求。`
+      + `正文和其它大段内容不要手写 JSON，写个脚本用 json.dump 落盘，转义交给库去做。`
     : taskWords.join(" ");
 
   if (oneShotTask) {
     const deliveryStartedAt = Date.now();
-    const result = await oneRound(oneShotTask);
+    let result = await oneRound(oneShotTask);
     // 一次性任务没有常驻状态栏，收尾补一行用量
     out(`${DIM}${statusLine().trim()}${RESET}\n`);
     if (dataArg) {
-      const delivery = await verifyPaperDelivery(root, messages, deliveryStartedAt);
+      let delivery = await verifyPaperDelivery(root, messages, deliveryStartedAt);
+
+      // **交付没齐就把「差什么」原样甩回给模型，让它接着补。**
+      //
+      // 无人值守下这是唯一的纠偏机会：没有人会看见它半途而废。而检查器攒的错误
+      // 恰恰是最好的指令 —— 它精确说明缺哪个文件、哪个回执，比任何泛泛的「继续」
+      // 都有用。2026-08-26 实测：模型把计划列得好好的，最后问一句「是否立即执行
+      // 上述步骤？」就收工了，交付检查报「缺少 paper.manifest.json」，而那正是
+      // 一句话就能让它自己走下去的信息。
+      //
+      // 只在模型是「自认为说完了」时推。它要是撞了轮次上限或者被 Ctrl-C 停了，
+      // 那是另一回事，推了也没用，还会盖掉真正的原因。
+      for (let push = 0; !delivery.ok && push < UNATTENDED_MAX_PUSHES; push++) {
+        if (result.stoppedBecause !== "stop" && result.stoppedBecause !== "end_turn") break;
+        if (result.aborted) break; // 用户 Ctrl-C 停的，别硬推
+        out(`${YELLOW}交付还差东西，让它继续做（第 ${push + 1}/${UNATTENDED_MAX_PUSHES} 次）${RESET}\n`);
+        result = await oneRound(
+          `交付检查没通过，还差这些：${delivery.errors.join("；")}\n`
+          + `接着把它们做完。不要从头重来，不要问我，也不要只说计划 —— 直接动手，`
+          + `一路做到 PDF 产出、gate 通过。`,
+        );
+        delivery = await verifyPaperDelivery(root, messages, deliveryStartedAt);
+      }
+
       if (result.stoppedBecause !== "stop" && result.stoppedBecause !== "end_turn") {
         delivery.errors.push(`agent 非正常结束: ${result.stoppedBecause}`);
         delivery.ok = false;

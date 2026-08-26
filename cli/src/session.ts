@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { repairToolCallGaps } from "./loop.ts";
+import { usableArguments } from "./model.ts";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -172,8 +173,28 @@ export class Session {
       break;
     }
 
+    // 4. 半截的 arguments 要洗掉。0.1.6 之前，tool_call 流到一半撞上输出上限，
+    //    那截残缺 JSON 会原样落盘（见 model.ts 里丢弃它的那段）。产生端修好了，
+    //    可库里存下的那些还在，每次 resume 都会再发出去一次，于是同一个会话
+    //    永远续不上。只有转换型网关会因此 400，官方通道透传不校验（issue #5）。
+    //
+    //    换成 {} 而不是删掉整个 tool_call：它和它的 tool 回执必须成对，删一个
+    //    就变成"tool 回执没有对应的 tool_call"，那是另一种 400。空参数配上原本
+    //    那条写着出错原因的 tool 回执，模型看得懂发生了什么，会自己重来。
+    let washed = 0;
+    for (const m of msgs) {
+      if (m.role !== "assistant" || !Array.isArray(m.tool_calls)) continue;
+      for (const call of m.tool_calls as Array<Record<string, unknown>>) {
+        const fn = call.function as Record<string, unknown> | undefined;
+        if (!fn || typeof fn.arguments !== "string") continue;
+        if (usableArguments(fn.arguments)) continue;
+        fn.arguments = "{}";
+        washed++;
+      }
+    }
+
     const repaired = repairToolCallGaps(msgs);
-    if (repaired && onRepair) onRepair(repaired);
+    if ((repaired || washed) && onRepair) onRepair(repaired + washed);
     return msgs;
   }
 

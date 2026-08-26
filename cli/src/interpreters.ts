@@ -286,6 +286,84 @@ export async function pythonCommandAsync(): Promise<string[]> {
 }
 
 /**
+ * 该往 agent 子进程的 PATH 前面塞哪个目录，不用塞就是 null。
+ *
+ * 治的是一个诊断和现实对不上的坑：agent 在 shell 里跑的命令写的是 `python3 xxx.py`，
+ * 走 PATH，**完全看不见**我们精挑细选出来的那个解释器。于是启动体检拿受管 venv
+ * （或者 OMNISCI_PYTHON）逐个 import，报「依赖就绪」，agent 一跑 `python3` 却落到
+ * 系统解释器上，numpy 都没有。诊断说好，实际跑不了，而且报错离原因十万八千里。
+ *
+ * 把选中那个解释器的目录前置到子进程的 PATH，`python3` 就指向体检时验过的那个。
+ * 这正是 venv activate 干的事，区别是只对 agent 的子进程干，不碰用户自己的 shell。
+ *
+ * 已经指向同一个文件就返回 null：那种情况下前置只是把系统目录往前挪一格，
+ * 平白改变别的命令的优先级，没有收益。
+ *
+ * 缓存挂在解析结果上而不是算一次就焊死：受管 venv 是应用跑起来之后才建的，
+ * pythonCommand() 会在 venv 出现后改口，这里得跟着改（跟 cachedPython 同一个道理）。
+ */
+export function pythonPathPrefix(): string | null {
+  let argv: string[];
+  try {
+    argv = pythonCommand();
+  } catch {
+    return null; // 一个 python 都没有，PATH 怎么排都救不了
+  }
+  const key = argv.join("\u0000");
+  if (pathPrefixKey === key) return pathPrefixValue;
+  pathPrefixKey = key;
+  pathPrefixValue = computePathPrefix(argv);
+  return pathPrefixValue;
+}
+
+/**
+ * 把选中的 python 所在目录前置到一份环境变量里，返回新的一份（不改原对象）。
+ *
+ * 给 agent 会执行的子进程用：shell 工具、论文工具链。用户的 hook 脚本里写 `python3`
+ * 也是同一个道理，一并受益。
+ *
+ * 不去重、不做别的清理：PATH 里出现重复目录只是多查一次，无害；而想在这里做得更聪明
+ * 就要解析整条 PATH，跨平台的坑比收益多。
+ */
+export function withPythonPath(
+  env: Record<string, string>,
+): Record<string, string> {
+  const dir = pythonPathPrefix();
+  if (!dir) return env;
+  // Windows 上环境变量名不分大小写，实际拿到的键可能是 Path 或 PATH
+  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const current = env[key] ?? "";
+  return { ...env, [key]: current ? dir + delimiter + current : dir };
+}
+
+let pathPrefixKey: string | null = null;
+let pathPrefixValue: string | null = null;
+
+function computePathPrefix(argv: string[]): string | null {
+  // `py -3` 那种是启动器加参数，没有「那个 python 的目录」可言
+  if (argv.length !== 1) return null;
+  const exe = argv[0]!;
+  const dir = dirname(exe);
+  if (!dir || dir === "." || dir === exe) return null;
+  // PATH 上排第一的已经是它了，就不用动
+  for (const name of ["python3", "python"]) {
+    const first = whichAll(name)[0];
+    if (first && samePathText(first, exe)) return null;
+    if (first) break; // 只看排最前面那个 python，后面的本来就轮不到
+  }
+  return dir;
+}
+
+/** 路径比对。Windows 大小写不敏感，斜杠两种都认。 */
+function samePathText(a: string, b: string): boolean {
+  const norm = (v: string) => {
+    const t = v.trim().replace(/[\\/]+/g, "/");
+    return process.platform === "win32" ? t.toLowerCase() : t;
+  };
+  return norm(a) === norm(b);
+}
+
+/**
  * 不走受管 venv 的那份。给"建 venv"用：venv 还不存在的时候得先有个基础解释器，
  * 而它同样不能是商店占位符，否则 `python -m venv` 直接退 49，虚拟环境永远建不出来。
  */

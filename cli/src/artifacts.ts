@@ -18,6 +18,8 @@ export interface Artifact {
 export class ArtifactStore {
   private items = new Map<string, Artifact>();
   private seq = 0;
+  /** 每个句柄已经被续取走了多少字符。见 noteFetched。 */
+  private fetched = new Map<string, number>();
 
   put(source: string, content: string): Artifact {
     const handle = `art_${++this.seq}`;
@@ -39,6 +41,27 @@ export class ArtifactStore {
 
   list(): Artifact[] {
     return [...this.items.values()];
+  }
+
+  /**
+   * 记一笔续取，返回这个句柄到目前为止总共取走了多少字符。
+   *
+   * 单条工具结果的上限（toolResultBudget）拦得住「一次大输出打满窗口」，拦不住
+   * 「分二十次把同一份大输出全搬进来」—— read_more 每次要 20000 字符，取五次就是
+   * 十万字符。2026-08-26 实测：模型对着一个大文件连取五次，直接把 131072 的窗口
+   * 撑破，触发了强制压缩救援。
+   *
+   * 所以累计量也要有账。这里只管记账和报数，卡不卡由调用方决定。
+   */
+  noteFetched(handle: string, chars: number): number {
+    const total = (this.fetched.get(handle) ?? 0) + Math.max(0, chars);
+    this.fetched.set(handle, total);
+    return total;
+  }
+
+  /** 这个句柄已经取走了多少。 */
+  fetchedSoFar(handle: string): number {
+    return this.fetched.get(handle) ?? 0;
   }
 
   /**

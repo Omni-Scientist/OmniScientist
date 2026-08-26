@@ -8,9 +8,13 @@ import { dirname, join, relative } from "node:path";
 
 import { sanitizeForDisplay } from "./shell.ts";
 import type { Tool, ToolContext } from "./index.ts";
+import { toolResultBudget } from "../context.ts";
 
 const MAX_FILE_BYTES = 2_000_000; // 超过这个体量整读没意义，让它分段或 grep
-const MAX_INLINE_CHARS = 60_000; // 单次进上下文的上限，超了存 artifact
+// 单次进上下文的上限，超了存 artifact。这是**大窗口下的上限**，实际还要被
+// toolResultBudget() 按当前模型的窗口收窄：60000 字符在 384k 窗口上占 4%，
+// 在 40960 的自建部署上占 37%，后者连读两次就把窗口顶爆（2026-08-26 实测）。
+const MAX_INLINE_CHARS = 60_000;
 const SKIP_DIRS = new Set([
   ".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", "dist",
 ]);
@@ -43,13 +47,54 @@ function readFile(args: Record<string, unknown>, ctx: ToolContext): string {
   lines = limit === undefined ? lines.slice(offset) : lines.slice(offset, offset + limit);
   const width = String(offset + lines.length).length;
   const body = lines.map((ln, i) => `${String(offset + i + 1).padStart(width)}\t${ln}`).join("\n");
-  return ctx.artifacts.truncate(`read_file: ${rel}`, body, MAX_INLINE_CHARS);
+  return ctx.artifacts.truncate(`read_file: ${rel}`, body, toolResultBudget(MAX_INLINE_CHARS));
+}
+
+/**
+ * 写 .json 文件之前先自己解析一遍，坏了就别落盘。
+ *
+ * 不然坏内容会一路传到下游工具那里才炸，而下游报的是它自己的 Traceback ——
+ * 模型看到的是「某个 python 脚本挂了」，根本不知道是自己上一步写的文件有问题，
+ * 更不知道错在第几行。
+ *
+ * 2026-08-26 实测：30B 手写了一份 25017 字节的 picks.json，第 18 行有个字符串没
+ * 闭合，它对着 lit_cli.py 的 Traceback 改了四十分钟没改对。而 JSON.parse 的报错
+ * 直接就带行列位置。
+ *
+ * 只认 .json 后缀，别的一律不碰：.jsonl 每行一个对象、模板文件带占位符，
+ * 拿严格 JSON 去卡它们就是误伤。
+ */
+function checkJsonBeforeWrite(rel: string, content: string): void {
+  if (!/\.json$/i.test(rel.trim())) return;
+  if (!content.trim()) return; // 空文件让它写，那是清空的意思
+  try {
+    JSON.parse(content);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    // 大块内容手写 JSON 基本写不对：几千字的正文里但凡有一个引号、反斜杠或换行
+    // 没转义，整份就废了，而且错在第几行全靠猜。2026-08-26 实测：30B 在 picks.json
+    // 和 sections.json 上连着栽了七八次，每次都是「某个字符串没闭合」。
+    // 让它改用脚本组装 —— json.dump 负责转义，这类错误就不存在了。
+    const bulky = content.length > 3_000
+      ? `\n这份内容有 ${content.length} 个字符，靠手写转义几乎不可能一次写对。`
+        + `改用脚本来生成：写一个小的 python，把每一段正文放进普通字符串变量，`
+        + `再用 json.dump 落盘。转义交给 json 库，你只管内容。`
+      : "";
+    throw new Error(
+      `没写：${rel} 的内容不是合法 JSON，落盘只会让下游工具报一个看不懂的错。\n`
+      + `解析器说：${why}\n`
+      + `按这个位置改好再写。常见原因是字符串没闭合、少了逗号、多了尾逗号。`
+      + `${bulky}\n`
+      + `内容如果本来就该由某条命令产出，直接把那条命令的输出重定向进去，别手抄。`,
+    );
+  }
 }
 
 function writeFile(args: Record<string, unknown>, ctx: ToolContext): string {
   const rel = String(args.path);
   const path = ctx.resolve(rel);
   const content = String(args.content ?? "");
+  checkJsonBeforeWrite(rel, content);
   mkdirSync(dirname(path), { recursive: true });
   const existed = existsSync(path);
   writeFileSync(path, content, "utf-8");
