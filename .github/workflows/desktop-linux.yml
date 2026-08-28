@@ -69,7 +69,11 @@ jobs:
 
       - name: Build the packages
         working-directory: desktop
-        run: bun x tauri build --bundles deb,appimage
+        env:
+          # linuxdeploy 默认对所有二进制跑 strip；bun 编译的 sidecar 是"可执行
+          # 尾部追加 JS 包"的结构，strip 一碰就把包剥坏，AppImage 打包必挂。
+          NO_STRIP: "true"
+        run: bun x tauri build --bundles deb,appimage --verbose
 
       - name: Verify what we are about to ship
         run: |

@@ -108,6 +108,17 @@ jobs:
           done
           echo "arm64 bundle is intact and sealed"
 
+      # mac runner 的盘小，Rust 编译中间产物 + 两套 node_modules 会把它吃到
+      # hdiutil 没地方写临时卷（实测 No space left on device）。出 dmg 前清掉
+      # 全部不再需要的东西。
+      - name: Free disk space before packaging
+        run: |
+          df -h / | tail -1
+          rm -rf desktop/src-tauri/target/release/{deps,build,incremental} \
+                 desktop/node_modules cli/node_modules desktop/dist-desktop \
+                 ~/.cargo/registry/src
+          df -h / | tail -1
+
       # dmg 自己出（hdiutil），不用 tauri 的 dmg 打包器：它会重新生成 app 目录，
       # 把上面的重签又冲掉。朴素窗口没有拖拽箭头背景，够用。
       - name: Package the dmg
