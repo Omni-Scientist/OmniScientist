@@ -108,29 +108,18 @@ jobs:
           done
           echo "arm64 bundle is intact and sealed"
 
-      # mac runner 的盘小，Rust 编译中间产物 + 两套 node_modules 会把它吃到
-      # hdiutil 没地方写临时卷（实测 No space left on device）。出 dmg 前清掉
-      # 全部不再需要的东西。
-      - name: Free disk space before packaging
-        run: |
-          df -h / | tail -1
-          rm -rf desktop/src-tauri/target/release/{deps,build,incremental} \
-                 desktop/node_modules cli/node_modules desktop/dist-desktop \
-                 ~/.cargo/registry/src
-          df -h / | tail -1
-
-      # dmg 自己出（hdiutil），不用 tauri 的 dmg 打包器：它会重新生成 app 目录，
-      # 把上面的重签又冲掉。朴素窗口没有拖拽箭头背景，够用。
-      - name: Package the dmg
+      # zip 而不是 dmg：GitHub 的 mac runner 上 hdiutil 会在盘明明有 95G 空闲时
+      # 谎报 "No space left on device"（2026-08-28 实测两轮，属 runner 已知抽风）。
+      # 老发行版的 mac 资产本来就是 OmniSci-Desktop-macOS.zip，沿用这个名字连
+      # 应用内更新的下载契约都不用动。dmg 等以后上 Developer ID 签名+公证时一起做。
+      - name: Package the zip
         working-directory: desktop/src-tauri/target/release/bundle/macos
         run: |
-          version=$(python3 -c "import json; print(json.load(open('../../../../tauri.conf.json'))['version'])")
-          hdiutil create -volname OmniScientist -srcfolder OmniScientist.app \
-            -ov -format UDZO "OmniScientist_${version}_aarch64.dmg"
-          ls -la *.dmg
+          ditto -c -k --keepParent OmniScientist.app OmniSci-Desktop-macOS.zip
+          ls -la *.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: OmniScientist-macos-dmg
-          path: desktop/src-tauri/target/release/bundle/macos/*.dmg
+          name: OmniScientist-macos
+          path: desktop/src-tauri/target/release/bundle/macos/*.zip
           if-no-files-found: error

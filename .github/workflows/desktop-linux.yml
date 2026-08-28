@@ -67,20 +67,18 @@ jobs:
           mkdir -p src-tauri/binaries
           cp dist-desktop/omnisci-desktop src-tauri/binaries/omnisci-desktop-x86_64-unknown-linux-gnu
 
-      - name: Build the packages
+      # 只出 .deb。AppImage 的打包器（linuxdeploy）给 bun 编译的 99MB sidecar
+      # 跑 ldd 收集依赖时直接崩（"Failed to run ldd: exited with code 1"，
+      # 2026-08-28 实测，NO_STRIP 也救不了），等上游或换收集方案再补 AppImage。
+      - name: Build the package
         working-directory: desktop
-        env:
-          # linuxdeploy 默认对所有二进制跑 strip；bun 编译的 sidecar 是"可执行
-          # 尾部追加 JS 包"的结构，strip 一碰就把包剥坏，AppImage 打包必挂。
-          NO_STRIP: "true"
-        run: bun x tauri build --bundles deb,appimage --verbose
+        run: bun x tauri build --bundles deb
 
       - name: Verify what we are about to ship
         run: |
           deb=$(ls desktop/src-tauri/target/release/bundle/deb/*.deb | head -1)
-          appimage=$(ls desktop/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
-          test -n "$deb" && test -n "$appimage"
-          ls -la "$deb" "$appimage"
+          test -n "$deb"
+          ls -la "$deb"
 
           # .deb 里必须真有壳和 sidecar 两个可执行
           dpkg-deb -c "$deb" | grep -E "usr/bin/OmniScientist$|omnisci-desktop" \
@@ -110,7 +108,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: OmniScientist-linux
-          path: |
-            desktop/src-tauri/target/release/bundle/deb/*.deb
-            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+          path: desktop/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
