@@ -7,10 +7,11 @@ name: desktop-linux
 # and does verify is the package structure and the sidecar service itself
 # (start, health, interface assets). GUI 行为靠 Windows/macOS 上的人工验收兜底。
 #
-# NOTE(v0.2.0 transition): release.yml 还在按老浏览器模式的 tar.gz 资产发版，
-# 切到安装包资产集之前不要打 tag。
+# 分支和 PR 上当构建检查；发版时由 release.yml 通过 workflow_call 调用，
+# 产物（.deb）以 artifact 落回同一次 run，由 publish 统一改稳定名、挂载。
 
 on:
+  workflow_call:
   push:
     branches: ["main", "launch/**"]
     paths: ["desktop/**", "cli/**", ".github/workflows/desktop-linux.yml"]
@@ -18,8 +19,10 @@ on:
     paths: ["desktop/**", ".github/workflows/desktop-linux.yml"]
   workflow_dispatch:
 
+# group 里带 github.workflow（被 release.yml 调用时解析成调用方的名字）：不然
+# 手动 dispatch 的发版和一次恰好同 ref 的独立构建会互相取消。
 concurrency:
-  group: desktop-linux-${{ github.ref }}
+  group: desktop-linux-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -72,7 +75,10 @@ jobs:
       # 2026-08-28 实测，NO_STRIP 也救不了），等上游或换收集方案再补 AppImage。
       - name: Build the package
         working-directory: desktop
-        run: bun x tauri build --bundles deb
+        run: |
+          # cargo 缓存可能带着上一个版本的 .deb 还魂；publish 的 mv 只认恰好一个。
+          rm -f src-tauri/target/release/bundle/deb/*.deb
+          bun x tauri build --bundles deb
 
       - name: Verify what we are about to ship
         run: |
@@ -110,3 +116,5 @@ jobs:
           name: OmniScientist-linux
           path: desktop/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
+          # v4 的 artifact 同名即 409。不加这个，"Re-run all jobs" 一按必炸。
+          overwrite: true

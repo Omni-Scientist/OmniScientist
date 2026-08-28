@@ -9,11 +9,11 @@ name: desktop-macos
 # ID later, import the certificate into a temporary keychain and set
 # APPLE_SIGNING_IDENTITY for `tauri build`.
 #
-# 发版由 release.yml 负责，这里只在分支和 PR 上当构建检查，不监听 tag。
-# NOTE(v0.2.0 transition): release.yml 还在按老浏览器模式的 zip 资产发版，
-# 切到 dmg 资产集之前不要打 tag。
+# 分支和 PR 上当构建检查；发版时由 release.yml 通过 workflow_call 调用，
+# 产物（OmniSci-Desktop-macOS.zip）以 artifact 落回同一次 run，由 publish 统一挂载。
 
 on:
+  workflow_call:
   push:
     branches: ["main", "launch/**"]
     paths: ["desktop/**", "cli/**", ".github/workflows/desktop-macos.yml"]
@@ -21,8 +21,10 @@ on:
     paths: ["desktop/**", ".github/workflows/desktop-macos.yml"]
   workflow_dispatch:
 
+# group 里带 github.workflow（被 release.yml 调用时解析成调用方的名字）：不然
+# 手动 dispatch 的发版和一次恰好同 ref 的独立构建会互相取消。
 concurrency:
-  group: desktop-macos-${{ github.ref }}
+  group: desktop-macos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -123,3 +125,5 @@ jobs:
           name: OmniScientist-macos
           path: desktop/src-tauri/target/release/bundle/macos/*.zip
           if-no-files-found: error
+          # v4 的 artifact 同名即 409。不加这个，"Re-run all jobs" 一按必炸。
+          overwrite: true

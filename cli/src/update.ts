@@ -106,19 +106,26 @@ export function compareVersions(a: string, b: string): number {
  * **跨版本的一次性代价**：0.1.5 及更早的客户端里编译进去的是旧正则，它们在新名字
  * 的资产列表里找不到匹配，"检查更新"会报找不到产物。手动去 release 页面下一次
  * 之后就正常了。这是改名换来的，明知的取舍，不是漏了。
+ *
+ * 0.2.0 桌面版换成了 Tauri 原生安装包，Windows 从 zip 变 NSIS 安装器（-setup.exe），
+ * Linux 从 tar.gz 变 .deb；macOS 还是 zip（.app 还是 .app），名字没动。0.1.x 的
+ * Windows / Linux 桌面客户端会再吃一次上面那个取舍：提示有新版本，但给不出直链。
  */
 export function assetPatternFor(platform: string, arch: string, kind: "cli" | "desktop"): RegExp {
   const product = kind === "cli" ? "omnisci-CLI" : "OmniSci-Desktop";
   let name: string;
   if (platform === "win32") {
-    name = `${product}-Windows-x64.zip`;
+    name = kind === "cli" ? `${product}-Windows-x64.zip` : `${product}-Windows-x64-setup.exe`;
   } else if (platform === "darwin") {
     // macOS 只出 arm64（2026-08-18 决定），所以名字里没有架构那一段。
     // 桌面版是 zip（.app 双击是 Mac 用户的预期，也是 Apple 文档里发 .app 的形式），
     // CLI 是 tar.gz（tar 天然保执行位，不依赖解压工具的实现）。
     name = kind === "cli" ? `${product}-macOS.tar.gz` : `${product}-macOS.zip`;
   } else {
-    name = `${product}-Linux-${arch === "arm64" ? "ARM64" : "x64"}.tar.gz`;
+    // 桌面版目前只出 x64 的 .deb（AppImage 等 linuxdeploy 修好再补），ARM64 这个
+    // 名字暂时没有对应资产，匹配不上就回落成"去 release 页手动下"，同上面的取舍。
+    const linuxArch = arch === "arm64" ? "ARM64" : "x64";
+    name = kind === "cli" ? `${product}-Linux-${linuxArch}.tar.gz` : `${product}-Linux-${linuxArch}.deb`;
   }
   return new RegExp(`^${name.replace(/\./g, "\\.")}$`);
 }

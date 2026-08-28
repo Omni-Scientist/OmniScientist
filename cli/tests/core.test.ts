@@ -792,7 +792,7 @@ describe("版本检查", () => {
     }
   });
 
-  // 右边这些名字不是编的，是 release.yml / build-windows.ps1 真会挂上去的那些。
+  // 右边这些名字不是编的，是 release.yml / desktop-*.yml 真会挂上去的那些。
   test("每个平台认得出 release 里挂的资产", () => {
     const hit = (p: string, a: string, k: "cli" | "desktop", name: string) =>
       assetPatternFor(p, a, k).test(name);
@@ -803,20 +803,25 @@ describe("版本检查", () => {
     expect(hit("win32", "x64", "cli", "omnisci-CLI-Windows-x64.zip")).toBe(true);
 
     expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-macOS.zip")).toBe(true);
-    expect(hit("linux", "x64", "desktop", "OmniSci-Desktop-Linux-x64.tar.gz")).toBe(true);
-    expect(hit("linux", "arm64", "desktop", "OmniSci-Desktop-Linux-ARM64.tar.gz")).toBe(true);
-    expect(hit("win32", "x64", "desktop", "OmniSci-Desktop-Windows-x64.zip")).toBe(true);
+    expect(hit("linux", "x64", "desktop", "OmniSci-Desktop-Linux-x64.deb")).toBe(true);
+    expect(hit("linux", "arm64", "desktop", "OmniSci-Desktop-Linux-ARM64.deb")).toBe(true);
+    expect(hit("win32", "x64", "desktop", "OmniSci-Desktop-Windows-x64-setup.exe")).toBe(true);
 
     // 别把别的架构、别的平台、别条产品线的包认成自己的。
-    expect(hit("linux", "arm64", "desktop", "OmniSci-Desktop-Linux-x64.tar.gz")).toBe(false);
-    expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-Linux-ARM64.tar.gz")).toBe(false);
+    expect(hit("linux", "arm64", "desktop", "OmniSci-Desktop-Linux-x64.deb")).toBe(false);
+    expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-Linux-ARM64.deb")).toBe(false);
     expect(hit("darwin", "arm64", "cli", "OmniSci-Desktop-macOS.zip")).toBe(false);
     expect(hit("darwin", "arm64", "desktop", "omnisci-CLI-macOS.tar.gz")).toBe(false);
     expect(hit("darwin", "arm64", "cli", "omnisci-CLI-macOS.tar.gz.sha256")).toBe(false);
 
-    // 名字里一律不带版本号。带了的一概不认，否则 2026-08-25 之前那种
-    // 「只有 Windows 包带版本号」的不一致会悄悄回来。
-    expect(hit("win32", "x64", "desktop", "OmniSci-Desktop-0.1.6-Windows-x64.zip")).toBe(false);
+    // 0.1.x 的桌面包名（zip / tar.gz）在 0.2.0 之后不该再被认出来，
+    // 否则哪天有人手滑把老包挂上去，更新按钮会喂给用户一个装不上的东西。
+    expect(hit("win32", "x64", "desktop", "OmniSci-Desktop-Windows-x64.zip")).toBe(false);
+    expect(hit("linux", "x64", "desktop", "OmniSci-Desktop-Linux-x64.tar.gz")).toBe(false);
+
+    // 名字里一律不带版本号。带了的一概不认，Tauri 出的原始名（带版本号）必须
+    // 在挂上去之前改掉，这两条断言就是那道闸。
+    expect(hit("win32", "x64", "desktop", "OmniScientist_0.2.0_x64-setup.exe")).toBe(false);
     expect(hit("darwin", "arm64", "desktop", "OmniSci-Desktop-0.1.6-macOS.zip")).toBe(false);
 
     // 桌面版 macOS 是 zip，CLI 是 tar.gz，别串了。
@@ -825,12 +830,12 @@ describe("版本检查", () => {
   });
 
   test("挑中平台对应的资产，校验和指向那一个 SHA256SUMS", async () => {
-    // 这个名字照着 release.yml 写死，只为验证挑中的是本机那个包。
+    // 这个名字照着发版工作流写死，只为验证挑中的是本机那个包。
     const mine = process.platform === "win32"
-      ? "OmniSci-Desktop-Windows-x64.zip"
+      ? "OmniSci-Desktop-Windows-x64-setup.exe"
       : process.platform === "darwin"
         ? "OmniSci-Desktop-macOS.zip"
-        : `OmniSci-Desktop-Linux-${process.arch === "arm64" ? "ARM64" : "x64"}.tar.gz`;
+        : `OmniSci-Desktop-Linux-${process.arch === "arm64" ? "ARM64" : "x64"}.deb`;
 
     // 让一次成功的查询落地，会把 latest 记进 ~/.omnisci/update-check.json，
     // 跑完测试命令行就会整天喊"有新版本 9.9.9"。存下来，跑完放回去。

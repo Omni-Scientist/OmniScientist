@@ -113,8 +113,27 @@ For any other OpenAI-compatible endpoint as the backbone, set `OMNISCI_BASE_URL`
 
 ## desktop
 
-A local service plus your own browser. Not a native window: it opens the browser you
-already use.
+A native desktop app (0.2.0 and later). The window, the service behind it, and all
+of your data stay on your machine.
+
+### Windows
+
+Download and run the installer, no administrator rights needed. It installs
+per-user and adds OmniScientist to the Start Menu.
+
+```text
+https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe
+```
+
+Two things to know. The `bash` tool needs a native bash, so install
+[Git for Windows](https://git-scm.com/download/win). WSL's bash is refused on
+purpose, because it runs in a different operating system and would silently
+produce results in the wrong filesystem. And SmartScreen will warn on first run,
+because the binary is not signed with a paid certificate. Choose "More info" then
+"Run anyway".
+
+Windows on ARM works through the x64 emulation layer; there is no separate ARM64
+build.
 
 ### macOS
 
@@ -124,52 +143,24 @@ curl -fsSL -o /tmp/OmniSci-Desktop-macOS.zip \
 ditto -x -k /tmp/OmniSci-Desktop-macOS.zip /Applications
 ```
 
-Then open it from Launchpad or Applications. A menu-bar icon appears; the browser
-opens by itself. Quit from the menu-bar item.
+Then open it from Launchpad or Applications.
 
 Install through the terminal rather than a browser download: the quarantine attribute
 is set by the *downloader*, and `curl` does not set it, so Gatekeeper never gets
-involved. If you do download the tarball in a browser, macOS 15 and later will block
+involved. If you do download the zip in a browser, macOS 15 and later will block
 the first launch and the way through is System Settings, Privacy & Security, "Open
 Anyway" (the old Control-click shortcut was removed in Sequoia).
-
-Verified on macOS 15.7.7 / M3: install, launch, menu bar, quit, relaunch, single
-instance, loopback-only binding, token handling, and signature. The end-to-end paper
-run on macOS has not been done.
 
 ### Linux
 
 ```bash
-curl -fsSL https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.tar.gz | tar -xz
-cd OmniSci-Desktop-Linux-*
-./install.sh          # per-user, no root; adds a menu entry and an icon
+curl -fsSL -o /tmp/OmniSci-Desktop-Linux-x64.deb \
+  https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb
+sudo apt install /tmp/OmniSci-Desktop-Linux-x64.deb
 ```
 
-Then launch it from the application menu, or run `omnisci-desktop`. `./install.sh
---uninstall` removes exactly what it added.
-
-### Windows
-
-Download `OmniSci-Desktop-Windows-x64.zip` from the release, unzip it, and
-run `install.ps1`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-It installs a Start Menu shortcut for the current user and needs no administrator
-rights. The `.exe` is built on a real Windows runner, so it carries publisher
-metadata and does not pop a console window.
-
-Two things to know. The `bash` tool needs a native bash: install
-[Git for Windows](https://git-scm.com/download/win). WSL's bash is refused on
-purpose, because it runs in a different operating system and would silently
-produce results in the wrong filesystem. And SmartScreen will warn on first run,
-because the binary is not signed with a paid certificate: choose "More info" then
-"Run anyway".
-
-Windows on ARM works through the x64 emulation layer; there is no separate ARM64
-build.
+Then launch it from the application menu, or run `OmniScientist`. Uninstall it
+through your package manager like any other package.
 
 ### What it does at startup
 

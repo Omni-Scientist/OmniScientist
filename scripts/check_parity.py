@@ -217,20 +217,24 @@ must_not_match(
 # 更新提示要给下载链接和 sha256，就得认得出 release 里挂的产物名。名字在 2026-08-25
 # 统一过：一律 <产品>-<平台>[-<架构>].<扩展名>，一律不带版本号，一律用人话。改了名字
 # 而这边没跟上，提示就退化成一句光秃秃的"有新版本"，校验和链接永远不出现。
+# 0.2.0 起桌面包由 release.yml 通过 workflow_call 调三条 desktop-*.yml 构建，
+# publish 统一改成稳定名（不带版本号）挂载，SHA256SUMS 也在那里对最终字节算。
 for token, where, why in (
-    ("OmniSci-Desktop-macOS.zip", ".github/workflows/release.yml", "macOS 桌面包名"),
-    ("OmniSci-Desktop-Linux-", ".github/workflows/release.yml", "Linux 桌面包名"),
+    ("OmniSci-Desktop-macOS.zip", ".github/workflows/desktop-macos.yml", "macOS 桌面包打包时就用稳定名"),
+    ("OmniSci-Desktop-macOS.zip", ".github/workflows/release.yml", "publish 点名的 macOS 桌面包名"),
+    ("OmniSci-Desktop-Linux-x64.deb", ".github/workflows/release.yml", "publish 改名并点名的 Linux 桌面包名"),
+    ("OmniSci-Desktop-Windows-x64-setup.exe", ".github/workflows/release.yml", "publish 改名并点名的 Windows 桌面包名"),
     ("omnisci-CLI-Windows-x64.zip", ".github/workflows/release.yml", "Windows CLI 产物名"),
-    ("OmniSci-Desktop-Windows-$Arch",
-     "desktop/packaging/windows/build-windows.ps1", "Windows 桌面包名"),
 ):
     must_contain(where, token, "update.ts 的产物匹配是照着这个名字写的：%s" % why)
 
 for token, why in (
     ('"omnisci-CLI" : "OmniSci-Desktop"', "两条产品线的前缀"),
-    ("-Windows-x64.zip", "Windows 两个包都是 zip，架构段是 x64"),
+    ("-Windows-x64.zip", "Windows 的 CLI 是 zip，架构段是 x64"),
+    ("-Windows-x64-setup.exe", "Windows 的桌面版是 NSIS 安装器（0.2.0 起）"),
     ("-macOS.tar.gz", "macOS 的 CLI 是 tar.gz"),
     ("-macOS.zip", "macOS 的桌面版是 zip"),
+    ("-Linux-${linuxArch}.deb", "Linux 的桌面版是 .deb（0.2.0 起）"),
     ('"ARM64" : "x64"', "Linux 架构段用人话，不是 uname 的 aarch64/x86_64"),
 ):
     must_contain("cli/src/update.ts", token, why)
@@ -270,12 +274,14 @@ for asset, why in (
             ".github/workflows/release.yml 的 cli matrix 不构建 %r\n"
             "      安装脚本会去下它，构建不出来就是那个平台的用户拿到 404：%s" % (asset, why))
 
-# 桌面包的名字在工作流里是 ${{ matrix.arch }} 拼的，抓不到字面量，所以点 matrix 本身。
-checked += 1
-if not re.search(r"os: macos,\s+arch: arm64\b", _matrix):
-    problems.append(
-        ".github/workflows/release.yml 的 desktop matrix 少了 macOS arm64\n"
-        "      官网 setup/mac-desktop.md 会去下它")
+# 0.2.0 起桌面包不走 release.yml 的 matrix，由它 workflow_call 三条 desktop-*.yml
+# 在原生 runner 上构建。两头都点一遍：工作流得可被调用，release.yml 得真在调。
+for wf in ("desktop-macos.yml", "desktop-linux.yml", "desktop-windows.yml"):
+    # 带冒号，认的是 on: 里真实的触发器，头部注释里提一嘴不算数
+    must_contain(".github/workflows/" + wf, "workflow_call:",
+                 "发版靠 release.yml 调它构建桌面包，去掉这个触发发行版就缺这个平台")
+    must_contain(".github/workflows/release.yml", "./.github/workflows/" + wf,
+                 "release.yml 不调 %s，那个平台的桌面包就不会出现在发行版里" % wf)
 
 # install.ps1 不许再去要一个没人构建的 ARM64 exe。
 must_not_match(

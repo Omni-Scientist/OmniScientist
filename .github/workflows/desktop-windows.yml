@@ -6,31 +6,25 @@ name: desktop-windows
 # assemble there, and the sidecar service binary gets its version/publisher
 # metadata only when bun compiles on Windows.
 #
-# The installer is ~36 MB and ships as a workflow artifact (and as a release
-# asset on tags), never as a committed file.
-#
-# NOTE(v0.2.0 transition): release.yml still expects the old browser-mode
-# OmniSci-Desktop-Windows-x64.zip on tags. Do not cut a tag until release.yml,
-# assetPatternFor() and the website download links have been moved to the
-# installer asset set.
+# The installer is ~36 MB and ships as a workflow artifact, never as a
+# committed file. On releases this workflow is invoked by release.yml via
+# workflow_call; publish renames the artifact to the stable asset name
+# OmniSci-Desktop-Windows-x64-setup.exe and attaches it.
 
 on:
+  workflow_call:
   push:
-    tags: ["v*"]
     branches: ["main", "launch/**"]
     paths: ["desktop/**", "cli/**", ".github/workflows/desktop-windows.yml"]
   pull_request:
     paths: ["desktop/**", ".github/workflows/desktop-windows.yml"]
   workflow_dispatch:
 
+# group 里带 github.workflow（被 release.yml 调用时解析成调用方的名字）：不然
+# 手动 dispatch 的发版和一次恰好同 ref 的独立构建会互相取消。
 concurrency:
-  group: desktop-windows-${{ github.ref }}
+  group: desktop-windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
-# 建 release、往上传产物都要写权限。仓库默认给 Actions 的是只读，
-# 不声明就是 403 Resource not accessible by integration。
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -50,16 +44,6 @@ jobs:
       - name: The five implementations must stay in step
         shell: pwsh
         run: python scripts/check_parity.py
-
-      # 版本号的唯一来源是 tauri.conf.json（parity 保证它跟其余四处一致）。
-      # 打了 tag 时断言 tag 就是它，别让发行版和程序自报的版本各说各话。
-      - name: The tag must match the configured version
-        if: github.ref_type == 'tag'
-        shell: pwsh
-        run: |
-          $conf = (Get-Content desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          $tag = $env:GITHUB_REF_NAME -replace '^v', ''
-          if ($tag -ne $conf) { throw "tag $tag != tauri.conf.json $conf" }
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -186,23 +170,5 @@ jobs:
           name: OmniScientist-windows-setup
           path: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
-
-      # release.yml 也被同一个 tag 触发；这里先到就先建草稿，晚到就 --clobber 覆盖。
-      - name: Attach to the release
-        if: github.ref_type == 'tag'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = $env:GITHUB_REF_NAME
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "release $tag 还不存在，先建一个草稿"
-            gh release create $tag --draft --generate-notes --title "OmniScientist $($tag -replace '^v', '')"
-            if ($LASTEXITCODE -ne 0) { throw "建 release $tag 失败" }
-          }
-          $files = Get-ChildItem desktop\src-tauri\target\release\bundle\nsis\*-setup.exe |
-                   ForEach-Object { $_.FullName }
-          if (-not $files) { throw "没有可上传的产物" }
-          gh release upload $tag $files --clobber
-          if ($LASTEXITCODE -ne 0) { throw "上传到 release $tag 失败" }
+          # v4 的 artifact 同名即 409。不加这个，"Re-run all jobs" 一按必炸。
+          overwrite: true

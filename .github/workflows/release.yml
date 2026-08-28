@@ -1,13 +1,21 @@
 name: Release
 
+# 打 tag 一条工作流出完整发行版。三条 desktop-*.yml 被 workflow_call 进来（跟平时
+# 当构建检查的是同一份逻辑，不写第二遍），CLI 矩阵和 skill 在这里打包，全部产物以
+# artifact 落在同一次 run 里，publish 一步收齐、改稳定名、算一份 SHA256SUMS、一次
+# 挂上 release。没有跨工作流等待，也没有"谁先建 release"的竞态。
+
+# 版本号不做输入：唯一来源是 tauri.conf.json（parity 保证它跟其余四处一致）。
+# 手动 dispatch 就是"按当前 main 的版本出一次发行版"，会建同名 tag 的 release。
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "版本号，比如 0.1.0（不带 v）"
-        required: true
+
+# 两个 tag 挨着推时别并发跑：晚跑完的会把 --latest 抢走，哪怕它版本更老。
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -16,33 +24,23 @@ env:
   BUN_VERSION: "1.3.14"
 
 jobs:
-  version:
-    runs-on: ubuntu-latest
-    outputs:
-      value: ${{ steps.pick.outputs.value }}
-    steps:
-      - id: pick
-        run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          fi
+  # 桌面包必须在各自平台的原生 runner 上出（NSIS / .app / .deb 只在原生环境组装）。
+  desktop-windows:
+    uses: ./.github/workflows/desktop-windows.yml
+  desktop-macos:
+    uses: ./.github/workflows/desktop-macos.yml
+  desktop-linux:
+    uses: ./.github/workflows/desktop-linux.yml
 
   # 产物名一律不带版本号，这样 releases/latest/download/<name> 是一条永远有效的
-  # 链接，install.sh 和文档都不用跟着每次发版改。以前只有 Windows 桌面包例外
-  # （它由 desktop-windows.yml 单独打，脚本自己往名字里塞了版本号），于是那一个
-  # 包没法做直链，assetPatternFor() 还得留一段可选的 -1.2.3 去兜它。2026-08-25
-  # 统一掉了：全都不带。
-  #
-  # 名字也一律用人话而不是 uname 的黑话。omnisci-darwin-arm64 要求用户同时知道
-  # darwin 是 macOS、arm64 是 M 系芯片、没后缀的是可执行文件，四个知识点才点得对
-  # 一个链接，结果它在 v0.1.5 只被下载了 3 次，是全场垫底。
+  # 链接，install.sh 和文档都不用跟着每次发版改。名字也一律用人话而不是 uname 的
+  # 黑话：omnisci-darwin-arm64 要求用户同时知道 darwin 是 macOS、arm64 是 M 系
+  # 芯片、没后缀的是可执行文件，四个知识点才点得对一个链接，它在 v0.1.5 只被下载
+  # 了 3 次，是全场垫底。
   #
   # 一律用原生 runner 编。CLI 依赖 @resvg/resvg-js 这个原生模块，交叉编译能编出
   # 文件，但塞进去的 .node 是宿主架构的，而它是懒加载的：只有渲染公式那一刻才炸。
   cli:
-    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -99,10 +97,8 @@ jobs:
       # Unix 用 tar.gz 不用 zip，是因为 tar 天然保执行位，不依赖解压工具的实现。
       # Windows 走 .NET 的 ZipFile。不用 7z：那是 runner 碰巧预装的外部依赖，
       # 普通 Windows 上没有（2026-08-25 在一台真机上确认过），CI 不该赌这个。
-      # 也不用 Compress-Archive：那是 PowerShell 5.1 自带的实现，
-      # desktop/packaging/windows/build-windows.ps1 的注释记着它打大 exe 会
-      # "Stream was not readable" 直接崩。ZipFile 是 Win10 起必有的组件，
-      # 那个脚本当初就是为同一个问题换过去的，这里跟它保持一致。
+      # 也不用 Compress-Archive：那是 PowerShell 5.1 自带的实现，打大 exe 会
+      # "Stream was not readable" 直接崩。ZipFile 是 Win10 起必有的组件。
       - name: 打包（Windows）
         if: runner.os == 'Windows'
         shell: pwsh
@@ -118,7 +114,6 @@ jobs:
           Remove-Item -Recurse -Force $stage
           Get-Item '${{ matrix.asset }}' | ForEach-Object { '{0}  {1:N1} MB' -f $_.Name, ($_.Length / 1MB) }
 
-      # Unix 用 tar.gz：tar 天然保执行位，不依赖解压工具的实现。
       - name: 打包（macOS / Linux）
         if: runner.os != 'Windows'
         shell: bash
@@ -127,82 +122,15 @@ jobs:
           tar czf "${{ matrix.asset }}" "${{ matrix.bin }}"
           ls -lh "${{ matrix.asset }}"
 
-      - name: 校验和
-        shell: bash
-        working-directory: cli/dist
-        run: |
-          if command -v sha256sum >/dev/null; then
-            sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
-          else
-            shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
-          fi
-
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: |
-            cli/dist/${{ matrix.asset }}
-            cli/dist/${{ matrix.asset }}.sha256
-
-  desktop:
-    needs: version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-latest,    os: linux,  arch: x86_64, label: x64 }
-          - { runner: ubuntu-24.04-arm, os: linux,  arch: arm64,  label: ARM64 }
-          - { runner: macos-latest,     os: macos,  arch: arm64,  label: macOS }
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.runner == 'ubuntu-24.04-arm' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "${{ env.BUN_VERSION }}" }
-      - working-directory: cli
-        run: bun install --frozen-lockfile      # gateway 从 cli/src 取代码
-      - working-directory: desktop
-        run: bun install --frozen-lockfile
-      - working-directory: desktop
-        run: bun run build:assets
-      - working-directory: desktop
-        run: bun build --compile --minify launcher/main.ts --outfile dist-desktop/omnisci-desktop
-
-      - name: 打 Linux 安装包
-        if: matrix.os == 'linux'
-        working-directory: desktop
-        run: |
-          # 传人话的架构标签（x64 / ARM64），build-linux.sh 直接产出最终名字，
-          # 连同包内的目录名一起，省掉一次改名，也让文档里那句 cd 不会骗人。
-          ./packaging/linux/build-linux.sh --binary dist-desktop/omnisci-desktop \
-            --version "${{ needs.version.outputs.value }}" --arch "${{ matrix.label }}" --out staging
-          mkdir -p artifacts
-          mv staging/*.tar.gz artifacts/
-          ( cd artifacts && sha256sum "OmniSci-Desktop-Linux-${{ matrix.label }}.tar.gz" \
-              > "OmniSci-Desktop-Linux-${{ matrix.label }}.tar.gz.sha256" )
-
-      # .app 外壳、菜单栏宿主、ad-hoc 签名和打包往返校验都在 build-app.sh 里，
-      # 那套在真机 macOS 15.7.7 / M3 上验收过。包是 zip 不是 tar.gz：.app 双击是
-      # Mac 用户的预期，zip 也是 Apple 文档里发 .app 的形式，签名和执行位都实测
-      # 扛得住往返（build-app.sh 自己会验，验不过就让构建失败）。
-      - name: 打 macOS 应用
-        if: matrix.os == 'macos'
-        working-directory: desktop
-        run: |
-          ./packaging/macos/build-app.sh --binary dist-desktop/omnisci-desktop \
-            --version "${{ needs.version.outputs.value }}" --out staging
-          mkdir -p artifacts
-          mv staging/OmniSci-Desktop-macOS.zip artifacts/
-          ( cd artifacts && shasum -a 256 OmniSci-Desktop-macOS.zip \
-              > OmniSci-Desktop-macOS.zip.sha256 )
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ matrix.os }}-${{ matrix.arch }}
-          path: desktop/artifacts/*
+          path: cli/dist/${{ matrix.asset }}
+          if-no-files-found: error
+          # v4 的 artifact 同名即 409。不加这个，"Re-run all jobs" 一按必炸。
+          overwrite: true
 
   skill:
-    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -211,54 +139,67 @@ jobs:
       - run: |
           python3 -m pip install --quiet numpy pandas matplotlib
           python3 skill/build.py --zip artifacts
-      - run: cd artifacts && sha256sum omnisci-skill.zip > omnisci-skill.zip.sha256
       - uses: actions/upload-artifact@v4
-        with: { name: skill, path: artifacts/* }
+        with:
+          name: skill
+          path: artifacts/omnisci-skill.zip
+          if-no-files-found: error
+          overwrite: true
 
   publish:
-    # 以前这里是 `if: always() && needs.version.result == 'success'`：cli / desktop /
-    # skill 任何一个挂掉，publish 照样跑，把"当时凑得齐的那些"当正式版发出去
-    # （draft: false）。少了哪个平台没人拦，用户下载到 404 才知道。
-    #
-    # 现在按 needs 的默认语义：全都成功才发。Linux ARM 那一格自己带
+    # needs 的默认语义：全都成功才发。半套产物发出去，缺的那个平台的用户只会拿到
+    # 404，而且只有他们会遇到，我们自己看不见。Linux ARM 那一格自己带
     # continue-on-error，它挂了不算 job 失败，所以"ARM 可缺席"这条原意还在。
-    needs: [version, cli, desktop, skill]
+    needs: [desktop-windows, desktop-macos, desktop-linux, cli, skill]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # 版本号的唯一来源是 tauri.conf.json（parity 保证它跟其余四处一致）。
+      # 打 tag 时断言 tag 就是它，别让发行版和程序自报的版本各说各话。
+      - name: 定版本
+        id: version
+        run: |
+          conf=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$conf" ]; then
+              echo "::error::tag $tag != tauri.conf.json $conf"
+              exit 1
+            fi
+          fi
+          echo "value=$conf" >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v4
         with: { path: staging }
-      - name: 汇总并列出实际拿到的产物
+
+      # Tauri 出的桌面包名带版本号（OmniScientist_0.2.0_x64-setup.exe、
+      # xxx_amd64.deb）。发行资产一律稳定名：latest/download 直链永远有效，
+      # 更新检查（assetPatternFor）认的也是它。macOS 的 zip 打包时就是稳定名。
+      - name: 汇总，桌面包改稳定名
         run: |
-          # 校验和只发 SHA256SUMS 一个文件。以前每个产物旁边还挂一份同名 .sha256，
-          # release 页上 10 个包变成 20 项，一半是噪音。所以 .sha256 压根不进 release/，
-          # 只把内容合进 SHA256SUMS。
-          #
-          # sed 抹掉 Windows runner 写出来的 * 前缀（sha256sum 的二进制模式），让整份文件
-          # 一个格式：sha256sum -c 两种都认，但 install.sh / install.ps1 是按文件名找行的。
           mkdir -p release
-          find staging -type f ! -name '*.sha256' -exec cp {} release/ \;
-          find staging -type f -name '*.sha256' -exec cat {} + \
-            | sed 's/ \*/  /' | sort -k2 > release/SHA256SUMS
+          find staging -type f -exec cp {} release/ \;
+          mv release/*-setup.exe release/OmniSci-Desktop-Windows-x64-setup.exe
+          mv release/*.deb release/OmniSci-Desktop-Linux-x64.deb
           echo "### 本次实际产出" >> "$GITHUB_STEP_SUMMARY"
           ls -lh release | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # "job 成功了"不等于"产物真的在这儿"。安装脚本和自动更新是照着固定名字去取的，
-      # 少一个就是线上 404，而这种 404 只有那个平台的用户会遇到，我们自己看不见。
-      # 所以按名单点一遍，缺了就别发。
-      #
+      # "job 成功了"不等于"产物真的在这儿"。安装脚本和更新检查是照固定名字取的，
+      # 少一个就是线上 404。所以按名单点一遍，缺了就别发。
       # 名单跟 install.sh / install.ps1 / assetPatternFor() 是同一套名字，
-      # check_parity.py 会盯着它们别漂。
+      # check_parity.py 盯着它们别漂。
       - name: 点名单：必须有的产物一个都不能少
         run: |
           missing=0
           for asset in \
+            OmniSci-Desktop-Windows-x64-setup.exe \
+            OmniSci-Desktop-macOS.zip \
+            OmniSci-Desktop-Linux-x64.deb \
             omnisci-CLI-Linux-x64.tar.gz \
             omnisci-CLI-macOS.tar.gz \
             omnisci-CLI-Windows-x64.zip \
-            omnisci-skill.zip \
-            OmniSci-Desktop-Linux-x64.tar.gz \
-            OmniSci-Desktop-macOS.zip
+            omnisci-skill.zip
           do
             if [ -f "release/$asset" ]; then
               echo "  有 $asset"
@@ -268,76 +209,32 @@ jobs:
             fi
           done
           # Linux ARM 允许缺席（runner 在私有仓库上不免费），缺了只提醒不拦。
-          for asset in omnisci-CLI-Linux-ARM64.tar.gz OmniSci-Desktop-Linux-ARM64.tar.gz; do
-            [ -f "release/$asset" ] || echo "::warning::$asset 这次没出来（Linux ARM 允许缺席）"
-          done
+          [ -f release/omnisci-CLI-Linux-ARM64.tar.gz ] \
+            || echo "::warning::omnisci-CLI-Linux-ARM64.tar.gz 这次没出来（Linux ARM 允许缺席）"
           exit $missing
 
-      # Windows 桌面包是 desktop-windows.yml 单独挂上去的，这个 job 的 staging 里没有它，
-      # 所以它的校验和进不了上面那份 SHA256SUMS。那条工作流一分钟就编完，跑到这一步通常
-      # 已经挂好了。
-      #
-      # 以前没赶上就只提醒、照发。现在不行了：桌面版的"下载新版本"按钮会核对
-      # SHA256SUMS，表里没有这一行就直接拒绝下载（这是设计，不校验的包不给用户），
-      # 于是这一行缺席等于所有 Windows 用户的更新按钮当场失效。打了 tag 的正式发布
-      # 要等它，等不到就让这一步失败，别发一个更新按钮是坏的版本出去。
-      - name: 把 Windows 桌面包的校验和并进来
+      # 校验和对最终要挂的字节算，只发 SHA256SUMS 一个文件。桌面版的"下载新版本"
+      # 按钮核对的就是它，表里没有那一行就拒绝下载（这是设计，不校验的包不给用户）。
+      - name: SHA256SUMS
+        run: |
+          ( cd release && sha256sum -- * ) | sort -k2 > SHA256SUMS.tmp
+          mv SHA256SUMS.tmp release/SHA256SUMS
+          cat release/SHA256SUMS
+
+      # 正文就是 release-notes.md（顶部是三个平台的下载直链）。re-run 时 release
+      # 可能已存在，那就只补传产物。先建草稿传完再发布，页面上不会出现半套资产。
+      - name: 发布
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.value) }}"
-          for attempt in $(seq 1 20); do
-            if gh release download "$tag" --pattern 'OmniSci-Desktop-Windows-x64.zip' --dir win 2>/dev/null; then
-              ( cd win && sha256sum -- *.zip >> ../release/SHA256SUMS )
-              sort -k2 -o release/SHA256SUMS release/SHA256SUMS
-              rm -rf win
-              echo "Windows 包的校验和已并入 SHA256SUMS"
-              exit 0
-            fi
-            echo "Windows 桌面包还没挂上来，第 $attempt 次等待"
-            sleep 30
-          done
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "::error::等了 10 分钟 Windows 桌面包还没挂上来。发出去的话 Windows 用户的更新按钮会因为校验和缺失而失效。"
-            exit 1
+          tag="v${{ steps.version.outputs.value }}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            # --target 只在 tag 还不存在时起作用（手动 dispatch 那条路）：把 tag 钉在
+            # 本次构建的提交上，而不是默认分支此刻的 HEAD。
+            gh release create "$tag" --draft --target "$GITHUB_SHA" \
+              --title "OmniScientist ${{ steps.version.outputs.value }}" \
+              --notes-file .github/release-notes.md
           fi
-          echo "::warning::Windows 桌面包还没挂上来，SHA256SUMS 里不含它（非 tag 构建，不拦）"
-
-      # desktop-windows.yml 一分钟就编完，它发现 release 不存在会先建一个草稿占位，
-      # 正文是 --generate-notes 出的那一行 changelog。而这个 action 对**已存在**的
-      # release 不会用 body 去盖掉已有正文，于是占位那行就成了最终正文，发布页上
-      # 除了一行 changelog 什么都没有。v0.1.3 就是这么空的，当场手工补的。
-      #
-      # 所以正文不再指望这个 action：它只管传产物，正文由下面那步用 gh CLI 强制写。
-      # body_path 仍然给着，是为了 release 由这边首创（不经过占位）时也对。
-      - uses: softprops/action-gh-release@v2
-        with:
-          append_body: false
-          name: OmniScientist ${{ needs.version.outputs.value }}
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.value) }}
-          draft: false
-          generate_release_notes: true
-          files: release/*
-          body_path: .github/release-notes.md
-
-      # 兜底。幂等：正文已经就位就不动，只有占位那种情况才补，并把自动生成的
-      # changelog 那行留在末尾。最坏结果是没补上，不会把已有正文弄坏。
-      - name: Make sure the release page is not blank
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="$GITHUB_REF_NAME"
-          current="$(gh release view "$tag" --json body --jq .body)"
-          if printf '%s' "$current" | grep -q '^## Install'; then
-            echo "正文已就位，不动它"
-            exit 0
-          fi
-          echo "正文只有 changelog 或是空的，补上说明"
-          cp .github/release-notes.md notes.md
-          changelog="$(printf '%s' "$current" | grep -E '^\*\*Full Changelog\*\*' || true)"
-          if [ -n "$changelog" ]; then
-            printf '\n%s\n' "$changelog" >> notes.md
-          fi
-          gh release edit "$tag" --notes-file notes.md
-          echo "发布页正文已写入"
+          gh release upload "$tag" release/* --clobber
+          gh release edit "$tag" --draft=false --latest
+          gh release view "$tag" --json assets --jq '.assets[].name'
