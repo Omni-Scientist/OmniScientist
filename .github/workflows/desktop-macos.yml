@@ -86,12 +86,18 @@ jobs:
 
       - name: Build the bundle
         working-directory: desktop
-        run: bun x tauri build --bundles app,dmg
+        run: bun x tauri build --bundles app
 
-      - name: Verify what we are about to ship
-        working-directory: desktop/src-tauri/target
+      # tauri 出的 app 要整体重签：bun 编译的 sidecar 是"先签名再往文件尾追加
+      # JS 包"，签名天生已失效；外层 app 又没封资源清单。浏览器下载会带隔离
+      # 标记，坏签名在用户那儿直接弹"已损坏"。ad-hoc 重签 + 封印后，用户见到的
+      # 是"未知开发者"（右键打开可过）。真证书签名+公证是以后的事。
+      - name: Re-sign and verify
+        working-directory: desktop/src-tauri/target/release/bundle/macos
         run: |
-          app=release/bundle/macos/OmniScientist.app
+          app=OmniScientist.app
+          codesign --force --sign - "$app/Contents/MacOS/omnisci-desktop"
+          codesign --force --sign - "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
           plutil -lint "$app/Contents/Info.plist"
           test -x "$app/Contents/MacOS/OmniScientist"
@@ -100,11 +106,20 @@ jobs:
             got=$(lipo -archs "$app/Contents/MacOS/$binary")
             [ "$got" = "arm64" ] || { echo "$binary is $got, expected arm64" >&2; exit 1; }
           done
-          echo "arm64 bundle is intact"
-          ls -la release/bundle/dmg
+          echo "arm64 bundle is intact and sealed"
+
+      # dmg 自己出（hdiutil），不用 tauri 的 dmg 打包器：它会重新生成 app 目录，
+      # 把上面的重签又冲掉。朴素窗口没有拖拽箭头背景，够用。
+      - name: Package the dmg
+        working-directory: desktop/src-tauri/target/release/bundle/macos
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('../../../../tauri.conf.json'))['version'])")
+          hdiutil create -volname OmniScientist -srcfolder OmniScientist.app \
+            -ov -format UDZO "OmniScientist_${version}_aarch64.dmg"
+          ls -la *.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: OmniScientist-macos-dmg
-          path: desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          path: desktop/src-tauri/target/release/bundle/macos/*.dmg
           if-no-files-found: error

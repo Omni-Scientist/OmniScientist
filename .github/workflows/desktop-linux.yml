@@ -40,8 +40,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
+          # libfuse2：AppImage 打包器（linuxdeploy）自身是个 AppImage，没有 FUSE
+          # 跑不起来，Ubuntu 24.04 默认不带（包名带 t64 后缀，老名字兜底）。
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libxdo-dev patchelf
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
 
       - name: The five implementations must stay in step
         run: python3 scripts/check_parity.py
