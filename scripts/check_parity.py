@@ -283,13 +283,15 @@ must_not_match(
     "上游没有 Windows ARM64 的构建；ARM64 应当回落到 x86_64，由系统模拟执行",
 )
 
-# 版本号躺在四个地方。它们只要有一处对不上，更新检查就会拿一个假的"当前版本"去跟
+# 版本号躺在五个地方。它们只要有一处对不上，更新检查就会拿一个假的"当前版本"去跟
 # release tag 比：说低了就永远提示有新版本（用户更新完还在提示），说高了就永远不提示。
+# tauri.conf.json 那份还决定安装包文件名和系统"已安装程序"里显示的版本。
 VERSIONS = {
     "cli/package.json": r'"version":\s*"([^"]+)"',
     "cli/src/cli.tsx": r'const VERSION = "([^"]+)"',
     "desktop/package.json": r'"version":\s*"([^"]+)"',
     "desktop/launcher/main.ts": r'const VERSION = "([^"]+)"',
+    "desktop/src-tauri/tauri.conf.json": r'"version":\s*"([^"]+)"',
 }
 checked += 1
 found = {}
@@ -304,7 +306,7 @@ for rel, pattern in VERSIONS.items():
         found[rel] = m.group(1)
 if len(set(found.values())) > 1:
     problems.append(
-        "版本号对不上：%s\n      发版时四处要一起改，否则更新提示会拿错的当前版本去比"
+        "版本号对不上：%s\n      发版时五处要一起改，否则更新提示会拿错的当前版本去比"
         % ", ".join("%s=%s" % kv for kv in sorted(found.items()))
     )
 

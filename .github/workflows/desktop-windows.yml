@@ -1,17 +1,18 @@
 name: desktop-windows
 
-# Builds OmniScientist.exe on a real Windows runner.
+# Builds the Tauri desktop app for Windows: OmniScientist_<version>_x64-setup.exe.
 #
-# It has to be a Windows runner, not a cross-compile: bun refuses
-# --windows-hide-console, --windows-title, --windows-publisher, --windows-version
-# and --windows-description unless it is compiling on Windows ("Using
-# --windows-hide-console is only available when compiling on Windows"). Cross
-# compiling from macOS or Linux does produce a working .exe, but it lands in the
-# console subsystem, so double-clicking it pops a black console window, and it
-# carries no version or publisher metadata.
+# It has to be a Windows runner: the NSIS installer and the WebView2 loader only
+# assemble there, and the sidecar service binary gets its version/publisher
+# metadata only when bun compiles on Windows.
 #
-# The artifact is ~120 MB, which is above GitHub's 100 MB per-file limit for the
-# repository itself, so it ships as a release asset and never as a committed file.
+# The installer is ~36 MB and ships as a workflow artifact (and as a release
+# asset on tags), never as a committed file.
+#
+# NOTE(v0.2.0 transition): release.yml still expects the old browser-mode
+# OmniSci-Desktop-Windows-x64.zip on tags. Do not cut a tag until release.yml,
+# assetPatternFor() and the website download links have been moved to the
+# installer asset set.
 
 on:
   push:
@@ -21,11 +22,6 @@ on:
   pull_request:
     paths: ["desktop/**", ".github/workflows/desktop-windows.yml"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to stamp into the executable"
-        required: false
-        default: "0.0.0-dev"
 
 concurrency:
   group: desktop-windows-${{ github.ref }}
@@ -38,9 +34,9 @@ permissions:
 
 jobs:
   build:
-    name: OmniScientist.exe
+    name: OmniScientist setup.exe
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -51,61 +47,65 @@ jobs:
           irm bun.sh/install.ps1 | iex
           "$env:USERPROFILE\.bun\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: The four implementations must stay in step
+      - name: The five implementations must stay in step
         shell: pwsh
         run: python scripts/check_parity.py
 
-      - name: Work out the version
-        id: version
+      # 版本号的唯一来源是 tauri.conf.json（parity 保证它跟其余四处一致）。
+      # 打了 tag 时断言 tag 就是它，别让发行版和程序自报的版本各说各话。
+      - name: The tag must match the configured version
+        if: github.ref_type == 'tag'
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_TYPE -eq "tag") { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
-          else { $version = "${{ inputs.version }}"; if (-not $version) { $version = "0.0.0-dev" } }
-          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host "building $version"
+          $conf = (Get-Content desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $tag = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($tag -ne $conf) { throw "tag $tag != tauri.conf.json $conf" }
 
-      - name: Build the package
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: cargo-windows-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      - name: Build the sidecar service binary
         shell: pwsh
         run: |
-          cd desktop\packaging\windows
-          .\build-windows.ps1 -Version "${{ steps.version.outputs.value }}" -Target bun-windows-x64
+          cd cli; bun install --frozen-lockfile; cd ..
+          cd desktop
+          bun install --frozen-lockfile
+          bun run build:desktop
+          New-Item -ItemType Directory -Force src-tauri\binaries | Out-Null
+          Copy-Item dist-desktop\omnisci-desktop.exe src-tauri\binaries\omnisci-desktop-x86_64-pc-windows-msvc.exe
+
+      - name: Build the installer
+        shell: pwsh
+        working-directory: desktop
+        run: bun x tauri build --bundles nsis
 
       - name: Verify what we are about to ship
         shell: pwsh
         run: |
-          $zip = Get-ChildItem desktop\packaging\windows\dist\*.zip | Select-Object -First 1
-          if (-not $zip) { throw "no package was produced" }
-          $work = Join-Path $env:RUNNER_TEMP "verify"
-          Expand-Archive -Path $zip.FullName -DestinationPath $work -Force
-          $exe = Get-ChildItem -Recurse -Filter OmniScientist.exe $work | Select-Object -First 1
-          if (-not $exe) { throw "the package has no OmniScientist.exe" }
+          $setup = Get-ChildItem desktop\src-tauri\target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "no installer was produced" }
+          Write-Host ("installer = " + $setup.Name + " " + [math]::Round($setup.Length / 1MB, 1) + " MB")
 
-          # Do NOT assert the GUI subsystem here. --windows-hide-console hides the
-          # console at RUNTIME; bun 1.3.x still emits a console-subsystem (3) PE.
-          # Verified on Windows 2026-08-16: launched from the Start Menu shortcut the
-          # process has MainWindowHandle 0 and no console window appears. Asserting
-          # subsystem == 2 rejects a perfectly good build.
-          $bytes = [IO.File]::ReadAllBytes($exe.FullName)
-          $pe = [BitConverter]::ToInt32($bytes, 0x3c)
-          Write-Host ("PE subsystem = " + [BitConverter]::ToUInt16($bytes, $pe + 0x5c) + " (informational)")
-
-          # The metadata flags are the part worth asserting: they only work when the
-          # build really ran on Windows, which is why this job exists.
-          $meta = (Get-Item $exe.FullName).VersionInfo
+          # The shell must carry product metadata; that is half the point of a
+          # native app over a bare service binary.
+          $shell_ = "desktop\src-tauri\target\release\OmniScientist.exe"
+          $meta = (Get-Item $shell_).VersionInfo
           if ($meta.ProductName -ne "OmniScientist") { throw "missing product metadata: $($meta.ProductName)" }
-          if ($meta.CompanyName -ne "Omni-Scientist") { throw "missing publisher metadata: $($meta.CompanyName)" }
+          Write-Host "product = $($meta.ProductName), version = $($meta.FileVersion)"
 
-          $info = (Get-Item $exe.FullName).VersionInfo
-          Write-Host "product   = $($info.ProductName)"
-          Write-Host "publisher = $($info.CompanyName)"
-          Write-Host "version   = $($info.FileVersion)"
-
-          # It must at least start, publish a session and answer /api/health.
+          # The sidecar must start, publish a session and answer /api/health,
+          # and actually serve the interface assets it claims to embed.
+          $exe = "desktop\src-tauri\binaries\omnisci-desktop-x86_64-pc-windows-msvc.exe"
           $home_ = Join-Path $env:RUNNER_TEMP "home"
           New-Item -ItemType Directory -Force $home_ | Out-Null
-          # 子进程继承当前进程的环境；-Environment 参数要 PowerShell 7.4+，不赌 runner 版本。
           $env:USERPROFILE = $home_
-          $proc = Start-Process -FilePath $exe.FullName -ArgumentList "--no-open","--verbose" -PassThru
+          $proc = Start-Process -FilePath $exe -ArgumentList "--no-open","--verbose" -PassThru
           try {
             $lock = Join-Path $home_ ".omnisci\desktop.lock"
             for ($i = 0; $i -lt 60 -and -not (Test-Path $lock); $i++) { Start-Sleep -Milliseconds 500 }
@@ -113,14 +113,12 @@ jobs:
             $port = (Get-Content $lock | ConvertFrom-Json).port
             $health = Invoke-RestMethod "http://127.0.0.1:$port/api/health"
             if (-not $health.ok) { throw "health check failed" }
-            Write-Host "health ok on port $port, workspace $($health.workspace)"
+            Write-Host "health ok on port $port"
 
-            # /api/health 过了不代表界面能看：静态资源少嵌一半时它照样 ok，
-            # 而用户看到的是没有 logo、图片全裂。所以真去取一次首屏要用的东西。
             $token = (Get-Content $lock | ConvertFrom-Json).token
             $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
             Invoke-WebRequest -Uri "http://127.0.0.1:$port/?t=$token" -WebSession $session -UseBasicParsing | Out-Null
-            foreach ($asset in @("/", "/assets/omni-logo.svg")) {
+            foreach ($asset in @("/", "/assets/omni-logo.svg", "/splash.html")) {
               $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port$asset" -WebSession $session -UseBasicParsing
               if ($r.StatusCode -ne 200) { throw "$asset returned $($r.StatusCode)" }
               if ($r.RawContentLength -lt 512) { throw "$asset came back suspiciously small ($($r.RawContentLength) bytes)" }
@@ -130,17 +128,22 @@ jobs:
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }
 
+          # The installer itself must install: silent mode, then the shell, the
+          # sidecar and the uninstaller must all land.
+          Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
+          $installed = Join-Path $env:LOCALAPPDATA "OmniScientist"
+          foreach ($file in @("OmniScientist.exe", "omnisci-desktop.exe", "uninstall.exe")) {
+            if (-not (Test-Path (Join-Path $installed $file))) { throw "silent install missing $file" }
+          }
+          Write-Host "silent install ok -> $installed"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: OmniScientist-windows
-          path: |
-            desktop/packaging/windows/dist/*.zip
-            desktop/packaging/windows/dist/*.sha256
+          name: OmniScientist-windows-setup
+          path: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
-      # release.yml 也被同一个 tag 触发，但它要等所有矩阵 job（含排队很久的 Intel mac）
-      # 跑完才建 release。Windows 这边一分钟就编完，先到一步就撞上 "release not found"。
-      # 所以这里自己兜底：没有就先建一个草稿，谁先到谁建，另一边用 --clobber 覆盖同名资产。
+      # release.yml 也被同一个 tag 触发；这里先到就先建草稿，晚到就 --clobber 覆盖。
       - name: Attach to the release
         if: github.ref_type == 'tag'
         shell: pwsh
@@ -150,16 +153,11 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            # 用 --generate-notes 而不是 --notes ""。这一步只是占位，正文归
-            # release.yml 管，但万一那边没跑到（比如只手动跑了这条工作流），
-            # 空正文会让发布页整个是白的——v0.1.2 就是这么空的。
             Write-Host "release $tag 还不存在，先建一个草稿"
             gh release create $tag --draft --generate-notes --title "OmniScientist $($tag -replace '^v', '')"
             if ($LASTEXITCODE -ne 0) { throw "建 release $tag 失败" }
           }
-          # 只挂 zip。校验和不再一个产物一个文件（release 列表会翻倍），统一进 release.yml
-          # 那份 SHA256SUMS，它发布前会把这个包下回去补上一行。
-          $files = Get-ChildItem desktop\packaging\windows\dist\*.zip |
+          $files = Get-ChildItem desktop\src-tauri\target\release\bundle\nsis\*-setup.exe |
                    ForEach-Object { $_.FullName }
           if (-not $files) { throw "没有可上传的产物" }
           gh release upload $tag $files --clobber

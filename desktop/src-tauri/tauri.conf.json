@@ -16,6 +16,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Omni-Scientist",
     "targets": "all",
     "externalBin": ["binaries/omnisci-desktop"],
     "icon": [
