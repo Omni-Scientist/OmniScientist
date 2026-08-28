@@ -134,10 +134,10 @@ def must_have_bom(rel, why):
             problems.append("%s 没有 UTF-8 BOM\n      %s" % (rel, why))
 
 
+# 桌面版的 install/uninstall 已换成 .cmd（batch 不吃 BOM，加了反而坏），
+# 这里只剩根目录 CLI 安装脚本和打包脚本两个 ps1 要查。
 for _ps1 in ("install.ps1",
-             "desktop/packaging/windows/install.ps1",
-             "desktop/packaging/windows/build-windows.ps1",
-             "desktop/packaging/windows/uninstall.ps1"):
+             "desktop/packaging/windows/build-windows.ps1"):
     must_have_bom(_ps1, "Windows PowerShell 5.1 会把无 BOM 的 UTF-8 当 ANSI 读，中文注释变乱码后整个脚本解析失败")
 
 # ---------------------------------------------------------------- 审阅页渲染
