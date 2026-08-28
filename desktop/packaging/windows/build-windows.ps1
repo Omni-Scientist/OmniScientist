@@ -90,20 +90,20 @@ try {
     Invoke-Checked "bun" $BuildArguments $DesktopRoot
 
     Copy-Item (Join-Path $PSScriptRoot "OmniScientist.ico") $Stage
-    Copy-Item (Join-Path $PSScriptRoot "install.ps1") $Stage
-    Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $Stage
+    Copy-Item (Join-Path $PSScriptRoot "install.cmd") $Stage
+    Copy-Item (Join-Path $PSScriptRoot "uninstall.cmd") $Stage
     @"
 OmniScientist Desktop $Version ($Arch)
 
 安装（当前用户，不需要管理员权限）：
 
-    powershell -ExecutionPolicy Bypass -File .\install.ps1
+    双击 install.cmd
 
-安装后可以从开始菜单打开 OmniScientist，也可以直接运行 OmniScientist.exe。
+装完会自动启动。以后从开始菜单打开 OmniScientist，或直接运行 OmniScientist.exe。
 
 卸载：
 
-    powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+    双击 uninstall.cmd
 
 工作区默认是：%USERPROFILE%\OmniScientist
 凭据文件是：%USERPROFILE%\.omnisci\env

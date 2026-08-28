@@ -155,6 +155,10 @@ def scan(paths, root, extra):
                 hit = m.group(0)
                 if "@" in hit and hit.strip(" '\"<>,;") in ALLOWED_EMAILS:
                     continue
+                # Retina asset names like 128x128@2x.png parse as "user@domain"
+                # but the "domain" is just a file extension, not an address.
+                if "@" in hit and re.search(r"\.(?:png|jpe?g|svg|gif|ico|icns|webp)$", hit, re.I):
+                    continue
                 # A path segment inside a URL is somebody's web page, not this machine
                 if hit.startswith("/home/") or hit.startswith("/Users/"):
                     before = line[:m.start()]

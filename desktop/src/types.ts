@@ -17,6 +17,8 @@ export interface ToolStep {
   tool: string;
   label: string;
   detail: string;
+  /** detail 里 {0} 占位符的参数；前端翻译后填入。 */
+  detailArgs?: Array<string | number>;
   status: "running" | "complete" | "failed";
   duration?: string;
   /** Sanitized, bounded output intended for explicit user disclosure. */
@@ -34,6 +36,8 @@ export interface TraceEntry {
   tool: string;
   label: string;
   detail: string;
+  /** detail 里 {0} 占位符的参数；前端翻译后填入。 */
+  detailArgs?: Array<string | number>;
   output?: string;
   status: TraceEntryStatus;
   importance?: TraceEntryImportance;
@@ -67,6 +71,8 @@ export interface Artifact {
   title: string;
   path: string;
   detail: string;
+  /** detail 里 {0} 占位符的参数；前端翻译后填入。 */
+  detailArgs?: Array<string | number>;
   updatedAt: string;
   order?: number;
   imageUrl?: string;

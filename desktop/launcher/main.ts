@@ -13,13 +13,17 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { accessSync, appendFileSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, platform } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { cp } from "node:fs/promises";
+import { homedir, platform, tmpdir } from "node:os";
+import { basename, delimiter, dirname, join, relative, resolve, sep } from "node:path";
 
 import { ASSETS, SKILL_FILES } from "./assets.generated.ts";
 import { UpdateDownloader, isInside } from "./update-download.ts";
+import {
+  autoDecision, missingNames, planFor, planIsEmpty, type Check, type InstallPlan,
+} from "./deps-plan.ts";
 
-const VERSION = "0.1.6";
+const VERSION = "0.2.0";
 const HOST = "127.0.0.1";
 const TECTONIC_VERSION = "0.17.0";
 
@@ -529,9 +533,240 @@ function openBrowser(url: string): void {
   }
 }
 
-// -------------------------------------------------------------------- 依赖体检
+// ------------------------------------------------------------ 数据进工作区
 
-interface Check { ok: boolean; detail: string }
+/** 人在系统面板里挑文件不该被催，给足时间；超时按取消算。 */
+const PICK_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * 对话框的宿主窗口。后台进程弹的窗口抢不到前台，会压在浏览器底下让用户以为
+ * 没反应（2026-08-27 实测踩过：三个对话框全开在浏览器后面，任务栏还没图标）。
+ * 所以宿主必须真的 Show 出来（不 Show 的窗口 TopMost 不生效），挪到屏幕外用户
+ * 看不见，但 TopMost 会带着它拥有的模态对话框一起置顶；任务栏上留一个
+ * OmniScientist 入口，点它激活的是对话框（宿主被模态禁用，激活会转给对话框）。
+ */
+const WIN_OWNER_PS = `Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$owner=New-Object System.Windows.Forms.Form
+$owner.Text='OmniScientist'
+$owner.TopMost=$true
+$owner.ShowInTaskbar=$true
+$owner.FormBorderStyle='None'
+$owner.StartPosition='Manual'
+$owner.Location=New-Object System.Drawing.Point(-32000,-32000)
+$owner.Size=New-Object System.Drawing.Size(1,1)
+$owner.Show()
+$owner.Activate()
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class OmniFront {
+  delegate bool EnumThreadDelegate(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] static extern bool EnumThreadWindows(uint tid, EnumThreadDelegate fn, IntPtr lp);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
+  static IntPtr found;
+  static IntPtr skip;
+  static bool OnWnd(IntPtr h, IntPtr lp) { if (h != skip && IsWindowVisible(h)) { found = h; return false; } return true; }
+  // 后台进程的窗口抢不到前台，Windows 只给闪任务栏。把自己挂到当前前台线程的
+  // 输入队列上（AttachThreadInput），系统就认为我们有输入权，SetForegroundWindow
+  // 才会真的生效；再钉成 TOPMOST，保证对话框开着期间一直看得见。
+  public static bool ForceFront(IntPtr owner) {
+    found = IntPtr.Zero; skip = owner;
+    EnumThreadWindows(GetCurrentThreadId(), OnWnd, IntPtr.Zero);
+    if (found == IntPtr.Zero) return false;
+    uint pid; uint fg = GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+    uint me = GetCurrentThreadId();
+    AttachThreadInput(me, fg, true);
+    try {
+      SetWindowPos(found, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002);   // HWND_TOPMOST, NOSIZE|NOMOVE
+      SetForegroundWindow(found);
+      BringWindowToTop(found);
+    } finally { AttachThreadInput(me, fg, false); }
+    return true;
+  }
+}
+"@
+$state=@{tries=0}
+$front=New-Object System.Windows.Forms.Timer
+$front.Interval=250
+$front.Add_Tick({
+  $state.tries++
+  if([OmniFront]::ForceFront($owner.Handle) -or $state.tries -gt 40){$front.Stop()}
+})
+$front.Start()
+`;
+
+/** Windows 的文件选择框。 */
+const WIN_PICK_FILE_PS = `$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.Encoding]::UTF8
+${WIN_OWNER_PS}
+$dlg=New-Object System.Windows.Forms.OpenFileDialog
+if($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($dlg.FileName)}
+`;
+
+/**
+ * Windows 的文件夹选择框。WinForms 那个 FolderBrowserDialog 在 .NET Framework
+ * 上还是九十年代的树形控件，所以直接调 shell 的 IFileOpenDialog（就是资源管理
+ * 器打开文件那个面板，加 FOS_PICKFOLDERS 变成选文件夹）。
+ */
+const WIN_PICK_FOLDER_PS = `$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.Encoding]::UTF8
+${WIN_OWNER_PS}
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class OmniFolderPick {
+  [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")]
+  private class FileOpenDialog { }
+  [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IFileOpenDialog {
+    [PreserveSig] int Show(IntPtr parent);
+    void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);
+    void SetFileTypeIndex(uint iFileType);
+    void GetFileTypeIndex(out uint piFileType);
+    void Advise(IntPtr pfde, out uint pdwCookie);
+    void Unadvise(uint dwCookie);
+    void SetOptions(uint fos);
+    void GetOptions(out uint pfos);
+    void SetDefaultFolder(IntPtr psi);
+    void SetFolder(IntPtr psi);
+    void GetFolder(out IntPtr ppsi);
+    void GetCurrentSelection(out IntPtr ppsi);
+    void SetFileName(string pszName);
+    void GetFileName(out string pszName);
+    void SetTitle(string pszTitle);
+    void SetOkButtonLabel(string pszText);
+    void SetFileNameLabel(string pszLabel);
+    void GetResult(out IShellItem ppsi);
+    void AddPlace(IntPtr psi, int fdap);
+    void SetDefaultExtension(string pszDefaultExtension);
+    void Close(int hr);
+    void SetClientGuid(ref Guid guid);
+    void ClearClientData();
+    void SetFilter(IntPtr pFilter);
+    void GetResults(out IntPtr ppenum);
+    void GetSelectedItems(out IntPtr ppsai);
+  }
+  [ComImport, Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IShellItem {
+    void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+    void GetParent(out IShellItem ppsi);
+    void GetDisplayName(uint sigdnName, out IntPtr ppszName);
+    void GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);
+    void Compare(IShellItem psi, uint hint, out int piOrder);
+  }
+  public static string Pick(IntPtr parent) {
+    var dlg = (IFileOpenDialog)new FileOpenDialog();
+    dlg.SetOptions(0x20 | 0x40);   // FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+    if (dlg.Show(parent) != 0) return "";
+    IShellItem item;
+    dlg.GetResult(out item);
+    IntPtr ptr;
+    item.GetDisplayName(0x80058000, out ptr);   // SIGDN_FILESYSPATH
+    var path = Marshal.PtrToStringUni(ptr);
+    Marshal.FreeCoTaskMem(ptr);
+    return path;
+  }
+}
+"@
+$picked=[OmniFolderPick]::Pick($owner.Handle)
+if($picked){[Console]::Out.Write($picked)}
+`;
+
+/** 正在开着的选择框。同一时刻最多一个：看不见旧框的用户会再点一次，不收掉会越积越多。 */
+let activePick: { proc: ReturnType<typeof Bun.spawn>; closed: boolean } | null = null;
+
+/** 收掉当前开着的选择框（被新框顶掉，或用户点了界面上的取消）。 */
+function closeActivePick(): void {
+  if (!activePick) return;
+  activePick.closed = true;
+  try { activePick.proc.kill(); } catch { /* 已经退了 */ }
+}
+
+/** 跑一个对话框子进程。被顶掉/取消/超时都按用户取消算。 */
+async function runPickCommand(
+  bin: string,
+  args: string[],
+): Promise<{ cancelled: boolean; code: number; stdout: string; stderr: string }> {
+  closeActivePick();
+  const proc = Bun.spawn([bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true });
+  const mine = { proc, closed: false };
+  activePick = mine;
+  const timer = setTimeout(() => { mine.closed = true; try { proc.kill(); } catch { /* 已经退了 */ } }, PICK_TIMEOUT_MS);
+  try {
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const code = await proc.exited;
+    return { cancelled: mine.closed, code, stdout, stderr };
+  } finally {
+    clearTimeout(timer);
+    if (activePick === mine) activePick = null;   // 被顶掉时 activePick 已指向新框，别误清
+  }
+}
+
+/**
+ * 弹系统原生的文件/文件夹选择框，返回选中的绝对路径；用户点取消返回 null。
+ *
+ * 浏览器不给网页真实路径，但这个进程就跑在用户机器上，让操作系统自己出面板
+ * （Finder / 资源管理器），比在网页里画目录树好用得多。不传起始目录：三个平台
+ * 的原生面板都自己记住上次的位置，比每次拽回工作区贴心。
+ *
+ * 平台弹不出来（无 GUI 的 Linux、没装 zenity）就抛错，前端退回目录树。
+ */
+async function pickNative(kind: "file" | "folder"): Promise<string | null> {
+  if (platform() === "darwin") {
+    const expr = kind === "folder"
+      ? 'choose folder with prompt "选择要导入工作区的文件夹"'
+      : 'choose file with prompt "选择要导入工作区的文件"';
+    const r = await runPickCommand("osascript", ["-e", "tell me to activate", "-e", `POSIX path of (${expr})`]);
+    if (r.cancelled) return null;
+    if (r.code === 0 && r.stdout.trim()) return r.stdout.trim().replace(/\/+$/, "");
+    if (r.code !== 0 && !/-128/.test(r.stderr)) throw new Error(r.stderr.trim() || "osascript 失败");
+    return null;   // -128 就是用户按了取消
+  }
+  if (platform() === "win32") {
+    // 脚本走临时文件而不是 -Command 内联：PowerShell 给原生参数转双引号的规则
+    // 是出了名的坑，多行脚本内联必挂。带 BOM 让 5.1 按 UTF-8 读。
+    const script = join(tmpdir(), `omnisci-pick-${kind}.ps1`);
+    writeFileSync(script, "\ufeff" + (kind === "folder" ? WIN_PICK_FOLDER_PS : WIN_PICK_FILE_PS));
+    const r = await runPickCommand("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-File", script]);
+    if (r.cancelled) return null;
+    if (r.code !== 0) throw new Error(r.stderr.trim() || `powershell 退出码 ${r.code}`);
+    const picked = r.stdout.trim();
+    return picked || null;   // 没输出就是取消
+  }
+  const zenity = await which("zenity");
+  if (!zenity) throw new Error("没有可用的系统选择框");
+  const args = kind === "folder" ? ["--file-selection", "--directory"] : ["--file-selection"];
+  const r = await runPickCommand(zenity, args);
+  if (r.cancelled) return null;
+  if (r.code === 0 && r.stdout.trim()) return r.stdout.trim();
+  return null;   // zenity 取消退 1
+}
+
+/** 在 dir 下找一个不撞名的子名：a、a-2、a-3…（带扩展名的插在扩展名前）。 */
+function uniqueChildName(dir: string, wanted: string): string {
+  const base = wanted || "data";
+  if (!existsSync(join(dir, base))) return base;
+  const dot = base.startsWith(".") ? -1 : base.lastIndexOf(".");
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : "";
+  for (let i = 2; ; i++) {
+    const candidate = `${stem}-${i}${ext}`;
+    if (!existsSync(join(dir, candidate))) return candidate;
+  }
+}
+
+// -------------------------------------------------------------------- 依赖体检
 
 /** 探测类子进程的上限。一个卡住的解释器不该把整个体检拖死。 */
 const PROBE_TIMEOUT_MS = 20_000;
@@ -620,7 +855,7 @@ async function doctor(deep = false): Promise<Record<string, Check>> {
     checks.packages = probe.code !== 0
       ? { ok: false, detail: (probe.stderr || "").trim().split("\n").pop() || "查不了依赖" }
       : missing.length
-        ? { ok: false, detail: `缺 ${missing.join("、")}` }
+        ? { ok: false, detail: `缺 ${missing.join("、")}`, items: missing }
         : { ok: true, detail: `${packages.length} 个包齐全` };
   }
 
@@ -660,8 +895,20 @@ async function cachedDoctor(): Promise<Record<string, Check>> {
 
 // -------------------------------------------------------------------- 依赖引导
 
-interface Bootstrap { running: boolean; done: boolean; ok: boolean; log: string[] }
-const bootstrapState: Bootstrap = { running: false, done: false, ok: false, log: [] };
+interface Bootstrap {
+  running: boolean;
+  done: boolean;
+  ok: boolean;
+  /** 这一趟是启动后自动发起的，还是用户在界面上点的。界面靠它决定说「正在自动补」还是「正在安装」。 */
+  auto: boolean;
+  /** 这一趟打算补哪几样。界面上要能说清楚在装什么，而不是一个转圈。 */
+  plan: InstallPlan;
+  log: string[];
+}
+const bootstrapState: Bootstrap = {
+  running: false, done: false, ok: false, auto: false,
+  plan: { python: false, tectonic: false }, log: [],
+};
 
 function note(line: string): void {
   bootstrapState.log.push(line);
@@ -673,17 +920,79 @@ function note(line: string): void {
 const INSTALL_TIMEOUT_MS = 30 * 60_000;
 
 /**
- * 跑 bootstrap 的一步，把输出记进引导日志。
+ * 把一条输出流逐行记进引导日志。
+ *
+ * \r 也当行分隔：进度类输出用 \r 原地刷新，不切开会攒成一条巨行。
+ */
+async function noteLines(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  const decoder = new TextDecoder();
+  let rest = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    rest += decoder.decode(value, { stream: true });
+    const lines = rest.split(/\r\n|\r|\n/);
+    rest = lines.pop() ?? "";
+    for (const line of lines) if (line.trim()) note(line);
+  }
+  rest += decoder.decode();
+  if (rest.trim()) note(rest);
+}
+
+/** 超时 kill 后等流自己收尾的宽限。过了这个点就不等 EOF，直接撤 reader。 */
+const KILL_GRACE_MS = 5_000;
+
+/**
+ * 跑 bootstrap 的一步，把输出边跑边记进引导日志。
  *
  * 这里同样不能用 spawnSync：pip install 以分钟计，以前那几分钟里整个网关一句话
  * 都答不出来，/api/doctor 和 /api/bootstrap 一起超时，界面看着就像死了。
- * 输出仍然是跑完才一次性记（跟以前一样），只是不再把服务按住。
+ * 也不能像 captureCommand 那样攒到跑完一次性记：装整套依赖那步在 Windows 上
+ * 实测 7 分多钟，界面横幅拿日志末行当心跳，攒着记的话它整段静止，像装挂了。
  */
 async function run(bin: string, args: string[]): Promise<boolean> {
   note(`$ ${bin} ${args.join(" ")}`);
-  const r = await captureCommand(bin, args, INSTALL_TIMEOUT_MS);
-  for (const line of `${r.stdout}${r.stderr}`.split(/\r?\n/)) if (line.trim()) note(line);
-  return r.code === 0;
+  try {
+    const proc = Bun.spawn([bin, ...args], {
+      stdin: "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true,
+      // Windows 上 python 接管道时 stdout 走 ANSI 代码页（简中是 GBK），中文
+      // 用户名的路径会被下面的 UTF-8 解码搅成一串替换符。对 tar 无害。
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    const readers = [proc.stdout.getReader(), proc.stderr.getReader()];
+    let timedOut = false;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      note(`这一步超过 ${INSTALL_TIMEOUT_MS / 60_000} 分钟还没结束，中止`);
+      try { proc.kill("SIGKILL"); } catch { /* 已经结束了 */ }
+      // kill 只打得到直接子进程。孙进程（pip 的构建隔离会嵌套起 python）若还
+      // 握着管道写端，流就永远不 EOF，读循环会一直挂着。宽限期后把 reader
+      // 撤掉，pending 的 read 以 done 收场，这一步才能真正结束。
+      graceTimer = setTimeout(() => {
+        for (const reader of readers) reader.cancel().catch(() => { /* 流已经关了 */ });
+      }, KILL_GRACE_MS);
+    }, INSTALL_TIMEOUT_MS);
+    try {
+      const reads = readers.map((reader) => noteLines(reader));
+      // Promise.all 在第一个 reject 后会抛弃另一个，这里接住免得成 unhandled rejection
+      for (const read of reads) read.catch(() => { /* 由 Promise.all 统一报 */ });
+      await Promise.all(reads);
+      if (timedOut) return false;   // 进程是被掐掉的，不看退出码，也不去等一个可能杀不干净的 exited
+      return await proc.exited === 0;
+    } catch (error) {
+      // 流读挂了不代表进程死了，不补一刀会留下没人读管道的僵尸
+      try { proc.kill(); } catch { /* 已经结束了 */ }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (graceTimer !== undefined) clearTimeout(graceTimer);
+    }
+  } catch (error) {
+    // Bun.spawn 找不到可执行文件时是抛，不是返回非零码
+    note(errorMessage(error));
+    return false;
+  }
 }
 
 /**
@@ -710,6 +1019,71 @@ function tectonicUrl(): { url: string; zip: boolean } | null {
   return { url: `${base}/tectonic-${TECTONIC_VERSION}-${target}.tar.gz`, zip: false };
 }
 
+/** 建 venv 并装 python 依赖。失败返回 false，原因已经记进引导日志。 */
+async function installPython(data: string): Promise<boolean> {
+  let base: string[];
+  try {
+    base = await basePythonCommandAsync();
+  } catch (error) {
+    note(errorMessage(error));
+    return false;
+  }
+  note(`基础解释器 ${base.join(" ")}`);
+
+  const venv = join(data, "venv");
+  if (!venvPython()) {
+    note(`建虚拟环境 ${venv}`);
+    if (!await run(base[0]!, [...base.slice(1), "-m", "venv", venv])) { note("建虚拟环境失败"); return false; }
+  }
+  const py = venvPython();
+  if (!py) { note("虚拟环境建出来了但找不到解释器"); return false; }
+
+  // -u 关掉 python 端的块缓冲，否则管道模式下 pip 的输出还是会攒一批一批出
+  if (!await run(py, ["-u", "-m", "pip", "install", "--upgrade", "pip"])) note("升级 pip 失败，继续");
+  // pip 见 stdout 不是终端就完全不渲染下载进度，大 wheel 下载那几分钟一行不出，
+  // 心跳还是会僵住。25.1 起的 --progress-bar raw 是给非交互场景的限频纯文本
+  // 进度；更旧的 pip 不认这个值会整条命令拒跑，所以探过版本才敢带。
+  const pipVersion = await captureCommand(py, ["-m", "pip", "--version"], PROBE_TIMEOUT_MS);
+  const match = /^pip (\d+)\.(\d+)/.exec(pipVersion.stdout.trim());
+  const rawBar = match !== null && (Number(match[1]) > 25 || (Number(match[1]) === 25 && Number(match[2]) >= 1));
+  const install = ["-u", "-m", "pip", "install", ...(rawBar ? ["--progress-bar", "raw"] : []), "-r", requirementsPath()];
+  if (!await run(py, install)) { note("装 python 依赖失败"); return false; }
+  return true;
+}
+
+/** 下 tectonic 放进受管的 bin。上游没出这个平台的包时如实说明，不算失败。 */
+async function installTectonic(data: string): Promise<boolean> {
+  const exe = platform() === "win32" ? "tectonic.exe" : "tectonic";
+  const bundled = join(data, "bin", exe);
+  if (existsSync(bundled) || await which("tectonic")) return true;
+
+  const target = tectonicUrl();
+  if (!target) {
+    note(`这个平台（${platform()}/${process.arch}）上游没有现成的 tectonic，需要自己装。`
+      + "在那之前，一轮研究会停在 .tex，不出 PDF");
+    return false;
+  }
+  note(`下载 tectonic ${TECTONIC_VERSION}`);
+  let bytes: ArrayBuffer;
+  try {
+    const res = await fetch(target.url);
+    if (!res.ok) { note(`下载失败 HTTP ${res.status}`); return false; }
+    bytes = await res.arrayBuffer();
+  } catch (error) {
+    // 断网时 fetch 是抛不是返回非 ok。以前没接住，整个 bootstrap 掉进外层
+    // catch，日志里只剩一行「引导异常」，看不出是网络问题。
+    note(`下载失败 ${errorMessage(error)}`);
+    return false;
+  }
+  const archive = join(data, target.zip ? "tectonic.zip" : "tectonic.tar.gz");
+  writeFileSync(archive, Buffer.from(bytes));
+  // Windows 10 1803 起自带 bsdtar，zip 和 tar.gz 都认；-xf 让它自己判类型。
+  const ok = await run("tar", ["-xf", archive, "-C", join(data, "bin"), exe]);
+  rmSync(archive, { force: true });
+  if (!ok) { note("解压 tectonic 失败"); return false; }
+  return true;
+}
+
 async function bootstrap(): Promise<void> {
   bootstrapState.running = true;
   bootstrapState.done = false;
@@ -719,52 +1093,25 @@ async function bootstrap(): Promise<void> {
     const data = dataDir();
     mkdirSync(join(data, "bin"), { recursive: true });
 
-    let base: string[];
-    try {
-      base = await basePythonCommandAsync();
-    } catch (error) {
-      note(errorMessage(error));
-      return;
-    }
-    note(`基础解释器 ${base.join(" ")}`);
+    // 现查一遍再决定补什么。缓存最长可能是 30 秒前的，而这中间用户完全可能自己
+    // 装了 python，按旧结论去建 venv 就是白干一趟。
+    const before = await doctor();
+    const plan = planFor(before);
+    bootstrapState.plan = plan;
+    if (planIsEmpty(plan)) { note("依赖齐全，没什么要补的"); bootstrapState.ok = true; return; }
+    note(`要补的：${[plan.python ? "python 依赖" : "", plan.tectonic ? "tectonic" : ""].filter(Boolean).join("、")}`);
 
-    const venv = join(data, "venv");
-    if (!venvPython()) {
-      note(`建虚拟环境 ${venv}`);
-      if (!await run(base[0]!, [...base.slice(1), "-m", "venv", venv])) { note("建虚拟环境失败"); return; }
-    }
-    const py = venvPython();
-    if (!py) { note("虚拟环境建出来了但找不到解释器"); return; }
-
-    if (!await run(py, ["-m", "pip", "install", "--upgrade", "pip"])) note("升级 pip 失败，继续");
-    if (!await run(py, ["-m", "pip", "install", "-r", requirementsPath()])) { note("装 python 依赖失败"); return; }
-
-    const exe = platform() === "win32" ? "tectonic.exe" : "tectonic";
-    const bundled = join(data, "bin", exe);
-    if (!existsSync(bundled) && !await which("tectonic")) {
-      const target = tectonicUrl();
-      if (!target) {
-        note(`这个平台（${platform()}/${process.arch}）上游没有现成的 tectonic，需要自己装；`
-          + "在那之前，一轮研究会停在 .tex，不出 PDF");
-      } else {
-        note(`下载 tectonic ${TECTONIC_VERSION}`);
-        const res = await fetch(target.url);
-        if (!res.ok) { note(`下载失败 HTTP ${res.status}`); return; }
-        const archive = join(data, target.zip ? "tectonic.zip" : "tectonic.tar.gz");
-        writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
-        // Windows 10 1803 起自带 bsdtar，zip 和 tar.gz 都认；-xf 让它自己判类型。
-        const ok = await run("tar", ["-xf", archive, "-C", join(data, "bin"), exe]);
-        rmSync(archive, { force: true });
-        if (!ok) { note("解压 tectonic 失败"); return; }
-      }
-    }
+    if (plan.python && !await installPython(data)) return;
+    if (plan.tectonic) await installTectonic(data);
 
     // 刚装出来的目录启动时还不存在，这里再挂一次，不然要重启才用得上。
     exposeManagedTools();
-    // 全场唯一一次深检：真 import 一遍。装完这一刻正是该确认"不只是文件在，
-    // 而是真的能用"的时候，而且这一整套本来就跑了几分钟，多十几秒无所谓。
-    // 结果直接顶进缓存：深检通过意味着快检必然也通过，界面不用再等一次。
-    const after = await doctor(true);
+    // 全场唯一一次深检：真 import 一遍。刚动过 python 环境的时候正是该确认
+    // "不只是文件在，而是真的能用"的时刻（numpy 和 pandas 的 ABI 对不上，
+    // find_spec 照样说有），而那一趟本来就跑了几分钟，多十几秒无所谓。
+    // 只补 tectonic 那种情况没碰过包，深检纯属白等 Windows 上的十几秒，走快检。
+    // 结果直接顶进缓存，深检通过意味着快检必然也通过，界面不用再等一次。
+    const after = await doctor(plan.python);
     doctorCache = { at: Date.now(), checks: after };
     // tectonic 也要算进来。它缺席时论文流程会停在 .tex 不出 PDF，
     // 而以前这里只看 python 和 packages，界面照样报"依赖就绪"——
@@ -780,6 +1127,45 @@ async function bootstrap(): Promise<void> {
     bootstrapState.running = false;
     bootstrapState.done = true;
   }
+}
+
+/** 自动补失败后的冷却。pip 那一趟要拉几百 MB，网不通的机器上不该每次开机重来。 */
+const AUTO_RETRY_MS = 6 * 3600_000;
+
+function autoStampPath(): string { return join(dataDir(), "auto-install.json"); }
+
+/** 上次自动补失败的时刻，没失败过是 null。文件读不了或者内容坏了都当没失败过。 */
+function lastAutoFailure(): number | null {
+  try {
+    const raw = JSON.parse(readFileSync(autoStampPath(), "utf-8")) as { failedAt?: unknown };
+    return typeof raw.failedAt === "number" ? raw.failedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+function stampAutoInstall(ok: boolean): void {
+  try {
+    if (ok) rmSync(autoStampPath(), { force: true });
+    else writeFileSync(autoStampPath(), JSON.stringify({ failedAt: Date.now() }));
+  } catch (error) {
+    // 记不下来只是下次会多试一遍，不值得让引导失败。
+    log(`记录自动补依赖结果失败: ${errorMessage(error)}`);
+  }
+}
+
+/**
+ * 发起一趟依赖引导。同一时刻只跑一趟，重复调用直接忽略。
+ *
+ * auto=true 是启动后自己发起的，成败要记账，好让下次开机知道要不要冷却；
+ * auto=false 是用户在界面上按的，不看冷却也不记账，他按了就是要现在试。
+ */
+function startBootstrap(auto: boolean): void {
+  if (bootstrapState.running) return;
+  bootstrapState.auto = auto;
+  void bootstrap().then(() => {
+    if (auto) stampAutoInstall(bootstrapState.ok);
+  });
 }
 
 // ------------------------------------------------------------------ 静态资源
@@ -886,7 +1272,11 @@ try {
           status: 302,
           headers: {
             Location: "/",
-            "Set-Cookie": `${SESSION_COOKIE}=${TOKEN}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`,
+            // Lax 而不是 Strict：桌面壳的开屏页在 tauri:// 起源上，跳到这里属于
+            // 跨站导航，Strict 会让浏览器在重定向落到 / 时不带 cookie，用户看到
+            // "请从启动器打开"（2026-08-28 实测）。Lax 只对顶层 GET 导航放行，
+            // 跨站的 POST/fetch 照样不带，CSRF 面没有实质变化。
+            "Set-Cookie": `${SESSION_COOKIE}=${TOKEN}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`,
           },
         });
       }
@@ -911,28 +1301,94 @@ try {
       // 才调得动，也就是只有本机上启动这个程序的人。选自己的工作目录不该被拦。
       if (request.method === "GET" && url.pathname === "/api/browse") {
         const asked = url.searchParams.get("path") || "";
+        // files=1 时连文件一起列（「从电脑导入」要能选单个文件），默认只列目录，
+        // 老的 entries 形状不动，选工作目录那个弹窗不用改。
+        const withFiles = url.searchParams.get("files") === "1";
         try {
           const target = asked ? resolve(asked) : homedir();
           const stat = statSync(target);
           if (!stat.isDirectory()) return Response.json({ error: "这不是目录" }, { status: 400 });
-          const entries = readdirSync(target, { withFileTypes: true })
+          const listed = readdirSync(target, { withFileTypes: true })
             .filter((e) => !e.name.startsWith("."))
-            .filter((e) => {
-              try { return e.isDirectory() || statSync(join(target, e.name)).isDirectory(); }
-              catch { return false; }        // 权限不够的、坏掉的链接，跳过就是
+            .map((e) => {
+              try {
+                const dir = e.isDirectory() || statSync(join(target, e.name)).isDirectory();
+                return { name: e.name, kind: dir ? "dir" as const : "file" as const };
+              } catch { return null; }       // 权限不够的、坏掉的链接，跳过就是
             })
-            .map((e) => e.name)
-            .sort((a, b) => a.localeCompare(b))
+            .filter((e): e is { name: string; kind: "dir" | "file" } => e !== null)
+            .filter((e) => withFiles || e.kind === "dir")
+            .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1))
             .slice(0, 500);
           const up = dirname(target);
           return Response.json({
             path: target,
             parent: up === target ? null : up,
             home: homedir(),
-            entries,
+            entries: listed.filter((e) => e.kind === "dir").map((e) => e.name),
+            items: withFiles ? listed : undefined,
           });
         } catch (error) {
           return Response.json({ error: errorMessage(error) }, { status: 400 });
+        }
+      }
+
+      // 「从电脑导入」：把盘上任意文件/文件夹由后端原生复制进工作区。数据不过
+      // 浏览器，多大都行。agent 只认工作区内的路径，所以落点固定是工作区。
+      if (request.method === "POST" && url.pathname === "/api/import") {
+        let body: { path?: unknown };
+        try { body = await request.json() as { path?: unknown }; }
+        catch { return Response.json({ error: "请求 JSON 无效" }, { status: 400 }); }
+        const asked = typeof body.path === "string" ? body.path.trim() : "";
+        if (!asked) return Response.json({ error: "没有给路径" }, { status: 400 });
+        const workspaceRoot = resolve(opts.workspace);
+        let source: string;
+        let sourceIsDir: boolean;
+        try {
+          source = resolve(asked);
+          sourceIsDir = statSync(source).isDirectory();
+          accessSync(source, fsConstants.R_OK);
+        } catch (error) {
+          return Response.json({ error: `读不了这个路径：${errorMessage(error)}` }, { status: 400 });
+        }
+        // 已经在工作区里的不拷第二份，直接回相对路径
+        if (isInside(workspaceRoot, source)) {
+          return Response.json({ path: relative(workspaceRoot, source).split(sep).join("/"), copied: false });
+        }
+        // 源包含工作区（或就是工作区）时，复制会把落点也拷进去，没完没了
+        if (source === workspaceRoot || isInside(source, workspaceRoot)) {
+          return Response.json({ error: "这个文件夹包含工作区本身，不能整个导入" }, { status: 400 });
+        }
+        const name = uniqueChildName(workspaceRoot, basename(source));
+        const target = join(workspaceRoot, name);
+        log(`importing ${source} -> ${name}`);
+        try {
+          await cp(source, target, { recursive: true });
+        } catch (error) {
+          rmSync(target, { recursive: true, force: true });   // 别留半份
+          return Response.json({ error: `复制失败：${errorMessage(error)}` }, { status: 500 });
+        }
+        log(`imported ${source} -> ${name}`);
+        return Response.json({ path: name, copied: true, kind: sourceIsDir ? "dir" : "file" });
+      }
+
+      // 弹系统原生选择框拿一个本机路径。前端拿到后再调 /api/import 复制进工作区。
+      // 501 表示这台机器弹不出面板（无 GUI 的 Linux 等），前端退回目录树。
+      // cancel=1 收掉当前开着的框（挂着的那个 /api/pick 请求会以 cancelled 返回）。
+      if (request.method === "POST" && url.pathname === "/api/pick") {
+        if (url.searchParams.get("cancel") === "1") {
+          closeActivePick();
+          return Response.json({ cancelled: true });
+        }
+        const kind = url.searchParams.get("kind") === "folder" ? ("folder" as const) : ("file" as const);
+        log(`pick ${kind}: dialog opened`);
+        try {
+          const picked = await pickNative(kind);
+          log(picked === null ? `pick ${kind}: cancelled` : `pick ${kind}: ${picked}`);
+          return picked === null ? Response.json({ cancelled: true }) : Response.json({ path: picked });
+        } catch (error) {
+          log(`pick ${kind} failed: ${errorMessage(error)}`);
+          return Response.json({ error: errorMessage(error) }, { status: 501 });
         }
       }
 
@@ -963,7 +1419,7 @@ try {
       }
       if (url.pathname === "/api/bootstrap") {
         if (request.method === "POST") {
-          if (!bootstrapState.running) void bootstrap();
+          startBootstrap(false);
           return Response.json({ started: true }, { status: 202 });
         }
         if (request.method === "GET") return Response.json(bootstrapState);
@@ -1187,14 +1643,16 @@ process.on("SIGTERM", () => shutdown(EXIT_OK));
 if (opts.open) openBrowser(URL_WITH_TOKEN);
 
 /**
- * 启动后报一次依赖状况。这件事只是为了写日志和给终端一行提示，没有任何人在等它。
+ * 启动后报一次依赖状况，缺什么就自己去补。**没有任何人在等这件事。**
  *
  * 以前是 `setTimeout(..., 0)` 里同步跑，那句"挪到下一个 tick 就不欠账"的注释是错的：
  * 一个 tick 是微秒级，而浏览器冷启动要一到三秒，第一批请求正好落在体检中间，
  * 被 spawnSync 按住。Windows 上实测因此白等 13.7 秒。
  *
- * 现在两道保险：体检整个是异步的（capture()），堵不住 HTTP；再往后压一秒，
- * 是为了别跟浏览器抢磁盘和杀毒软件的扫描配额，让首屏那几个请求先过去。
+ * 现在三道保险：体检和安装整个是异步的（captureCommand 走 Bun.spawn），堵不住 HTTP；
+ * 往后压一秒，让首屏那几个请求先过去，别跟浏览器抢磁盘和杀毒软件的扫描配额；
+ * 补依赖只在体检**之后**才发起，那时端口早 bind 完、浏览器早开了。
+ * 这条路上一句同步子进程都不能加，加了就是把启动时间还回去。
  */
 setTimeout(() => {
   void cachedDoctor().then(
@@ -1203,6 +1661,21 @@ setTimeout(() => {
         if (!check.ok) process.stdout.write(`  依赖待装 ${name}: ${check.detail}\n`);
         log(`doctor ${name}: ${check.ok ? "ok" : "missing"} ${check.detail}`);
       }
+      const decision = autoDecision({
+        checks: health,
+        disabled: process.env.OMNISCI_AUTO_INSTALL === "0",
+        failedAt: lastAutoFailure(),
+        now: Date.now(),
+        retryAfterMs: AUTO_RETRY_MS,
+      });
+      log(`auto-install ${decision.run ? "start" : "skip"}: ${decision.reason}`);
+      if (!decision.run) {
+        // 跳过的原因只在有东西缺的时候说。全齐的时候没人关心。
+        if (missingNames(health).length) process.stdout.write(`  ${decision.reason}\n`);
+        return;
+      }
+      process.stdout.write(`  ${decision.reason}，正在后台补，不影响现在用\n`);
+      startBootstrap(true);
     },
     (error: unknown) => log(`doctor 失败: ${String(error)}`),
   );

@@ -71,3 +71,8 @@ scan_leaks.local.json
 # 内部翻译工具，跑起来要 LLM API key，不进仓库
 scripts/translate_readme.py
 desktop/tools/translate-locales.ts
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/src-tauri/gen/
+desktop/src-tauri/icons/android/
+desktop/src-tauri/icons/ios/

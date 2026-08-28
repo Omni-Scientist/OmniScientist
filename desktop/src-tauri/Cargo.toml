@@ -1,0 +1,24 @@
+[package]
+name = "omnisci-tauri"
+version = "0.2.0"
+description = "OmniScientist desktop shell"
+edition = "2021"
+
+# 壳只做三件事：拉起本机服务（sidecar）、把它的页面装进真窗口、退出时收干净。
+# 业务逻辑全部在 TypeScript 侧（launcher + gateway + React），这里不放任何业务。
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+
+[lib]
+name = "omnisci_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[profile.release]
+strip = true
+lto = true

@@ -1482,6 +1482,55 @@ textarea:focus-visible,
   gap: 2px;
 }
 
+/* 回形针弹出的两项小菜单（选文件 / 选文件夹），面板本身是系统原生的 */
+.pick-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.pick-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.pick-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid var(--border-v2);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+}
+
+.pick-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary-v2);
+  font-size: var(--text-xs);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pick-menu button:hover:not(:disabled) {
+  background: var(--accent-soft-v2);
+}
+
+.pick-menu button:disabled {
+  opacity: 0.5;
+}
+
 .skill-selector {
   height: 36px;
   gap: 6px;
@@ -1798,6 +1847,8 @@ textarea:focus-visible,
 .settings-dialog[open] {
   display: flex;
   flex-direction: column;
+  /* 子项最小高度加起来超过 max-height 时（矮窗口）让整个弹窗内部滚，别叠字 */
+  overflow: auto;
 }
 
 .settings-dialog {
@@ -1870,7 +1921,11 @@ textarea:focus-visible,
   flex: 1;
   display: grid;
   grid-template-columns: 244px minmax(0, 1fr);
-  min-height: 0;
+  /* 不写死最小高度的话，WKWebView（Tauri 的 Mac 内核）会把这段 flex:1 直接
+     塌成 0，表头页脚叠在一起（2026-08-28 实测；Chrome 和 Playwright 的
+     WebKit 都不塌，只有系统 WKWebView 塌）。480px 是两栏内容的合理下限，
+     栏内各自有 overflow-y 兜着。 */
+  min-height: 480px;
 }
 
 .provider-rail {
@@ -2841,4 +2896,158 @@ textarea:focus-visible,
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+
+/*
+ * 依赖没齐时顶在对话区上方的一条。
+ *
+ * 用警示橙不用红：研究照样能跑，只是最后拿不到 PDF，这不是错误是缺件。
+ * 位置在 header 之下、滚动区之上，所以它不随消息滚走，也不遮输入框。
+ */
+.dep-banner {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-v2);
+  background: var(--orange-soft);
+  color: var(--warning-v2);
+}
+
+.dep-banner-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 18px;
+}
+
+.dep-banner-icon {
+  display: flex;
+  flex: 0 0 auto;
+  padding-top: 1px;
+}
+
+.dep-banner-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dep-banner-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+
+.dep-banner-detail {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary-v2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+}
+
+/* 装依赖时那行心跳。夹成一行，提示条的高度才不会跟着 pip 的输出长短跳。 */
+.dep-banner-progress {
+  overflow: hidden;
+  overflow-wrap: normal;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dep-banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.dep-banner-button {
+  border: 1px solid var(--warning-v2);
+  border-radius: 6px;
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--warning-v2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dep-banner-button:hover:not(:disabled) {
+  background: rgba(168, 93, 0, 0.09);
+}
+
+.dep-banner-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.dep-banner-link {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  padding: 4px 2px;
+  background: transparent;
+  color: var(--text-secondary-v2);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.dep-banner-link:hover {
+  color: var(--text-primary-v2);
+}
+
+/* 装依赖的输出可以很长，让它自己滚，别把整页撑宽。 */
+.dep-banner-log {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border-v2);
+  padding: 8px 18px 10px;
+  color: var(--text-secondary-v2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dep-spin {
+  animation: dep-spin 1s linear infinite;
+}
+
+@keyframes dep-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dep-spin { animation: none; }
+}
+
+/* ---- 从电脑导入 ---- */
+
+/* 状态条里的文字按钮（选择阶段的「取消」），盖掉 .context-chip button 的 18px 圆钮档位 */
+.context-chip .context-link {
+  width: auto;
+  height: 20px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--accent-v2);
+  color: var(--surface-v2, #fff);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.context-chip .context-link:hover {
+  background: color-mix(in srgb, var(--accent-v2) 86%, #000);
+}
+
+/* 「从电脑导入」列表里点中的文件 */
+.picker-row.is-picked {
+  background: var(--accent-soft-v2);
+  color: var(--accent-v2);
 }

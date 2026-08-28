@@ -62,7 +62,9 @@ The launcher is the contract the macOS packaging depends on. Changing
 | Logs | `~/.omnisci/logs/desktop-<date>.log` |
 | `GET /api/health` | unauthenticated, so the instance check can use it |
 | `GET /api/doctor` | python, its packages, and tectonic, with versions |
-| `POST /api/bootstrap` | installs the missing ones into the app data directory |
+| `POST /api/bootstrap` | installs the missing ones into the app data directory, skipping whatever is already there |
+| Auto install | a second after startup, once the port is bound and the browser is open, anything missing is installed in the background. `OMNISCI_AUTO_INSTALL=0` turns it off, and a failed attempt waits 6 hours before retrying |
+| Install button | the chat pane shows a strip whenever a check fails, with the progress log and a button that runs the same install on demand, ignoring the retry delay |
 | `POST /api/quit` | authenticated; answers **before** exiting |
 | Exit codes | 0 fine, 1 bad arguments or config, 2 the port would not bind. Missing python or tectonic still starts, and the interface offers to install them |
 

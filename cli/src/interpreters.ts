@@ -110,25 +110,39 @@ let pythonCacheFinal = false;
 let basePythonCache: string[] | null = null;
 
 /**
- * 候选自己说出 major 版本和 sys.executable 才算通过。
- * 商店占位符没有输出、退出码非零，这里自然出局。
+ * 让候选自己报 major 版本和它认为自己跑在什么平台上。
+ *
+ * 平台那一段是 Windows 上的关键：`WindowsApps\\python3.exe` 是 WSL 的转发器，
+ * 跑起来是另一个操作系统里的解释器，`sys.version_info[0]` 一样返回 3，光看版本
+ * 根本分不出来。选中它之后 `$OMNISCI` 展开成空、路径按 /mnt/c 解析、tectonic 找不到，
+ * 报错还全是 `wsl: Failed to translate` 这种跟真正原因毫无关系的噪音。
+ * 2026-08-27 在一台装了 WSL 的 Windows 上实测撞到，整场跑不出论文。
+ *
+ * shellCommand() 那边早就用 $OSTYPE 挡住了 WSL 的 bash，这里缺的是同一道闸。
  */
+const PROBE_SRC = "import sys; sys.stdout.write('%d|%s' % (sys.version_info[0], sys.platform))";
+
+export function acceptProbe(out: string): boolean {
+  const [major, platform] = out.trim().split("|");
+  if (major !== "3") return false;
+  // 只有 Windows 上需要挑平台：那儿才有 WSL 和 msys 两种「看着能跑」的假解释器。
+  if (process.platform !== "win32") return true;
+  return platform === "win32";
+}
+
 function probePython(argv: string[]): boolean {
   const r = spawnSync(
     argv[0]!,
-    [...argv.slice(1), "-c", "import sys; sys.stdout.write('%d' % sys.version_info[0])"],
+    [...argv.slice(1), "-c", PROBE_SRC],
     { encoding: "utf-8", timeout: PROBE_MS },
   );
-  return r.status === 0 && (r.stdout || "").trim() === "3";
+  return r.status === 0 && acceptProbe(r.stdout || "");
 }
 
 /** probePython 的异步版，判据完全一样。 */
 async function probePythonAsync(argv: string[]): Promise<boolean> {
-  const r = await captureCommand(
-    argv[0]!,
-    [...argv.slice(1), "-c", "import sys; sys.stdout.write('%d' % sys.version_info[0])"],
-  );
-  return r.code === 0 && r.stdout.trim() === "3";
+  const r = await captureCommand(argv[0]!, [...argv.slice(1), "-c", PROBE_SRC]);
+  return r.code === 0 && acceptProbe(r.stdout);
 }
 
 /**
@@ -200,12 +214,22 @@ function* pythonSources(useVenv: boolean): Generator<PythonSource> {
   if (process.platform === "win32") yield { argv: ["py", "-3"] };
 }
 
+/** 官方下载页。报错里给了地址，用户才不用自己去搜。 */
+const PYTHON_DOWNLOAD: Record<string, string> = {
+  win32: "https://www.python.org/downloads/windows/（装的时候勾上 Add python.exe to PATH）",
+  darwin: "https://www.python.org/downloads/macos/ 或者 brew install python@3.12",
+  linux: "用发行版的包管理器，比如 apt install python3 python3-venv",
+};
+
 function noPythonError(tried: string[]): Error {
+  const where = PYTHON_DOWNLOAD[process.platform] ?? "https://www.python.org/downloads/";
   return new Error(
     "找不到能用的 python 3。试过：" + (tried.join("、") || "（PATH 上一个都没有）")
-    + "。装好 python 3 之后重开，或者设 OMNISCI_PYTHON 指到具体的可执行文件。"
+    + `。去这里装一个：${where}。装好之后重开，或者设 OMNISCI_PYTHON 指到具体的可执行文件。`
     + (process.platform === "win32"
-      ? " 注意 Windows 上的 python3 常常是微软商店的占位符（2 字节，跑起来退 49），那个不是 python。"
+      ? " Windows 上有两种「看着是 python 其实不是」的东西：微软商店的占位符"
+        + "（2 字节，跑起来退 49），以及 WSL 的转发器（那是另一个操作系统里的解释器，"
+        + "路径和环境变量都跟这边对不上）。两种都会被拒掉，装原生的那个。"
       : ""),
   );
 }

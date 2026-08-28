@@ -20,14 +20,11 @@ OmniSci-Desktop-Windows-x64.zip
 OmniSci-Desktop-Windows-x64.zip.sha256
 ```
 
-解压后运行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-它只安装当前用户的开始菜单快捷方式，不需要管理员权限。卸载默认保留工作区、
-会话和依赖；如果确认要删运行数据，再执行 `uninstall.ps1 -PurgeData`。
+解压后**双击 `install.cmd`** 即可安装并自动启动。安装器是纯 batch（快捷方式
+那步用 Windows 自带的 cscript 写，零外部依赖），不含任何 .ps1，普通用户双击
+就能跑。只装当前用户的开始菜单快捷方式，不需要管理员权限。旧版还在运行时
+会先征求同意再退出它。卸载双击 `uninstall.cmd`，默认保留工作区、会话和依赖，
+结束时会把数据目录的路径列出来，确认不要了再手动删。
 
 ## 命令后端：需要原生 bash
 

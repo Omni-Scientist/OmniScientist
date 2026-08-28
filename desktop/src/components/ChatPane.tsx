@@ -4,13 +4,16 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  CircleAlert,
   ChevronRight,
   ChevronUp,
   Code2,
   Copy,
   Database,
+  File,
   FileText,
   FlaskConical,
+  Folder,
   Image,
   ListTree,
   LoaderCircle,
@@ -38,8 +41,10 @@ import Markdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { LANGS, t, useLang, type Lang } from "../lib/i18n";
+import { cancelPick, importIntoWorkspace, pickFromComputer, PickUnavailableError, tauriDialog } from "../lib/workspace";
 import type { Artifact, ChatMessage, ChatSession, MessageBlock, ResearchTrace, ToolStep } from "../types";
 import { WorkspacePicker } from "./WorkspacePicker";
+import { DependencyBanner } from "./DependencyBanner";
 import { IconButton } from "./IconButton";
 
 interface ChatPaneProps {
@@ -217,7 +222,7 @@ function ToolStepRow({ step }: { step: ToolStep }) {
           <strong>{t(step.label)}</strong>
           <code>{step.tool}</code>
         </span>
-        <span>{t(step.detail)}</span>
+        <span>{t(step.detail, ...(step.detailArgs ?? []))}</span>
       </span>
       <span className="tool-step-tail">
         {step.duration ? <time>{step.duration}</time> : null}
@@ -387,7 +392,7 @@ function ArtifactRow({ artifact, onOpen }: { artifact: Artifact; onOpen: () => v
       </span>
       <span className="artifact-copy">
         <strong>{artifact.title}</strong>
-        <small>{t(artifact.detail)}</small>
+        <small>{t(artifact.detail, ...(artifact.detailArgs ?? []))}</small>
       </span>
       <span className="artifact-path">{artifact.path}</span>
       <PanelRightOpen size={16} className="artifact-open-icon" />
@@ -672,6 +677,10 @@ export function ChatPane({
   const [pickerOpen, setPickerOpen] = useState(false);
   /** 界面上选的数据目录。它不是用户打的字，所以不进输入框，单独当一个选项挂着。 */
   const [dataPath, setDataPath] = useState("");
+  const [pickMenu, setPickMenu] = useState(false);
+  /** dialog = 系统选择框开着等用户选；copy = 后端正在往工作区复制。 */
+  const [pickPhase, setPickPhase] = useState<null | "dialog" | "copy">(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const followOutputRef = useRef(true);
@@ -728,6 +737,36 @@ export function ChatPane({
     }
   };
 
+  /** 系统面板选一个文件/文件夹，后端原生复制进工作区。数据不过浏览器，多大都行。 */
+  async function pickData(kind: "file" | "folder") {
+    setPickMenu(false);
+    setPickPhase("dialog");
+    setImportError(null);
+    try {
+      // Tauri 壳里直接用壳的原生对话框：秒弹、焦点天然正确。浏览器模式退回
+      // 后端代弹（osascript / PowerShell），那条路慢且在 Windows 上抢不到前台。
+      let picked: string | null;
+      const dialog = tauriDialog();
+      if (dialog) {
+        const chosen = await dialog.open({ directory: kind === "folder", multiple: false });
+        picked = typeof chosen === "string" ? chosen : null;
+      } else {
+        picked = await pickFromComputer(kind);
+      }
+      if (picked === null) return;   // 用户在面板里点了取消
+      setPickPhase("copy");
+      const rel = await importIntoWorkspace(picked);
+      setDataPath(rel);
+      textareaRef.current?.focus();
+    } catch (e) {
+      // 这台机器弹不出系统面板（无 GUI 的 Linux 等），退回目录树弹窗
+      if (e instanceof PickUnavailableError) { setPickerOpen(true); return; }
+      setImportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPickPhase(null);
+    }
+  }
+
   return (
     <main className="chat-pane">
       <header className="chat-header">
@@ -757,6 +796,8 @@ export function ChatPane({
           </IconButton>
         </div>
       </header>
+
+      <DependencyBanner />
 
       <div className="conversation-scroll" ref={scrollRef} onScroll={handleConversationScroll}>
         <div className="conversation-inner">
@@ -802,6 +843,30 @@ export function ChatPane({
 
       <footer className="composer-wrap">
         <div className={`composer ${busy ? "is-busy" : ""}`}>
+          {pickPhase || importError ? (
+            <div className="composer-context">
+              <span className="context-chip">
+                {pickPhase ? <LoaderCircle size={13} className="spin" /> : <CircleAlert size={13} />}
+                <span>
+                  {pickPhase === "dialog"
+                    ? t("在系统弹出的窗口里选…")
+                    : pickPhase === "copy"
+                      ? t("正在导入…")
+                      : t("导入失败 {0}", importError ?? "")}
+                </span>
+                {pickPhase === "dialog" && !tauriDialog() ? (
+                  <button type="button" className="context-link" onClick={() => cancelPick()}>
+                    {t("取消")}
+                  </button>
+                ) : null}
+                {!pickPhase ? (
+                  <button type="button" onClick={() => setImportError(null)} aria-label={t("关闭")}>
+                    <X size={12} />
+                  </button>
+                ) : null}
+              </span>
+            </div>
+          ) : null}
           {dataPath ? (
             <div className="composer-context">
               <span className="context-chip">
@@ -827,9 +892,29 @@ export function ChatPane({
           />
           <div className="composer-toolbar">
             <div className="composer-tools">
-              <IconButton label={t("选择数据")} tone="quiet" onClick={() => setPickerOpen(true)}>
-                <Paperclip size={17} />
-              </IconButton>
+              <span className="pick-menu-wrap">
+                <IconButton
+                  label={t("选择数据")}
+                  tone="quiet"
+                  onClick={() => setPickMenu((open) => !open)}
+                >
+                  <Paperclip size={17} />
+                </IconButton>
+                {pickMenu ? (
+                  <>
+                    {/* 点外面关掉菜单。透明层压在页面上，菜单本体 z 序更高。 */}
+                    <div className="pick-menu-backdrop" onClick={() => setPickMenu(false)} />
+                    <div className="pick-menu" role="menu">
+                      <button type="button" role="menuitem" disabled={pickPhase !== null} onClick={() => void pickData("file")}>
+                        <File size={14} /> {t("选文件…")}
+                      </button>
+                      <button type="button" role="menuitem" disabled={pickPhase !== null} onClick={() => void pickData("folder")}>
+                        <Folder size={14} /> {t("选文件夹…")}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </span>
               <span className="skill-selector">
                 <FlaskConical size={14} />
                 OmniScientist
@@ -875,7 +960,6 @@ export function ChatPane({
           textareaRef.current?.focus();
         }}
       />
-
     </main>
   );
 }

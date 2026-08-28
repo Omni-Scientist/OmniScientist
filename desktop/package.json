@@ -1,7 +1,7 @@
 {
   "name": "omnisci-desktop",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -12,6 +12,7 @@
     "build:desktop": "bun run build:assets && bun build --compile --minify launcher/main.ts --outfile dist-desktop/omnisci-desktop",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.bun.json",
+    "test:unit": "bun test tests/*.unit.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
+    "@tauri-apps/cli": "^2.11.4",
     "@types/bun": "^1.3.14",
     "@types/node": "^26.2.0",
     "@types/react": "^18.3.12",

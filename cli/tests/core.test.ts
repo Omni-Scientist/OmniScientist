@@ -42,7 +42,7 @@ import {
 import { gatherSignals, resetSignalCache } from "../src/triggers.ts";
 import { overlongInputFrom, tokenCapFromError, unparsedToolCallHint, usableArguments, MALFORMED_KEY, stripReasoning } from "../src/model.ts";
 import { harvestEnvAssignments } from "../src/shell-env.ts";
-import { withPythonPath } from "../src/interpreters.ts";
+import { withPythonPath, acceptProbe } from "../src/interpreters.ts";
 import { RepeatTracker } from "../src/loop.ts";
 import { ArtifactStore } from "../src/artifacts.ts";
 import { FS_TOOLS } from "../src/tools/fs.ts";
@@ -2273,5 +2273,34 @@ describe("硬闸不能反过来造出新的空转", () => {
     for (const n of ["write_file", "edit_file", "bash", "omnisci_compile"]) {
       expect(readOnly.includes(n)).toBe(false);
     }
+  });
+});
+
+describe("Windows 上不能把 WSL 的 python 当成本机的", () => {
+  // WindowsApps\python3.exe 是 WSL 的转发器，跑起来是另一个操作系统里的解释器，
+  // sys.version_info[0] 一样返回 3，光看版本分不出来。选中之后 $OMNISCI 展开成空、
+  // 路径按 /mnt/c 解析、tectonic 找不到，报错还全是 wsl: Failed to translate。
+  // 2026-08-27 在一台装了 WSL 的 Windows 上实测撞到，整场跑不出论文。
+
+  const win = process.platform === "win32";
+
+  test("python 2 一律不要", () => {
+    expect(acceptProbe("2|win32")).toBe(false);
+    expect(acceptProbe("2|linux")).toBe(false);
+  });
+
+  test("原生解释器通过", () => {
+    expect(acceptProbe("3|win32")).toBe(true);
+  });
+
+  test("WSL 的解释器在 Windows 上必须被拒", () => {
+    // 只有 win32 上才需要挑平台；在 mac/linux 跑这套测试时 linux 是正常值
+    expect(acceptProbe("3|linux")).toBe(!win);
+  });
+
+  test("输出有噪音也不能误判", () => {
+    expect(acceptProbe("  3|win32  ")).toBe(true);
+    expect(acceptProbe("")).toBe(false);
+    expect(acceptProbe("3")).toBe(!win);   // 没报平台，win 上不敢要
   });
 });
