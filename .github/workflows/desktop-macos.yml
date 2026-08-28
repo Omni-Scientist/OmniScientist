@@ -1,8 +1,9 @@
 name: desktop-macos
 
-# Builds the Tauri desktop app for macOS, both architectures, off one arm64
-# runner: the sidecar service binary cross-compiles with bun --target, the shell
-# cross-compiles with a rustup target.
+# Builds the Tauri desktop app for macOS, arm64 only: Intel Mac 用户已经排不上
+# 优先级（2026-08-28 决定砍掉），少一半构建时间。要恢复的话，给 sidecar 加
+# bun-darwin-x64 交叉编译、rustup target add x86_64-apple-darwin、tauri build
+# --target x86_64-apple-darwin 三步就回来。
 #
 # Signing is ad-hoc (no identity on the runner). To sign with a real Developer
 # ID later, import the certificate into a temporary keychain and set
@@ -50,7 +51,7 @@ jobs:
             desktop/src-tauri/target
           key: cargo-macos-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
 
-      - name: Build the service binary for both architectures
+      - name: Build the service binary
         run: |
           # The launcher pulls in the gateway, which pulls in cli/src, so both
           # dependency trees have to be present.
@@ -61,8 +62,6 @@ jobs:
           mkdir -p src-tauri/binaries
           bun build --compile --minify --target=bun-darwin-arm64 \
             launcher/main.ts --outfile src-tauri/binaries/omnisci-desktop-aarch64-apple-darwin
-          bun build --compile --minify --target=bun-darwin-x64 \
-            launcher/main.ts --outfile src-tauri/binaries/omnisci-desktop-x86_64-apple-darwin
           ls -la src-tauri/binaries
 
       - name: The binary must carry the whole interface, not half of it
@@ -85,36 +84,27 @@ jobs:
         working-directory: desktop/packaging/launcher-ref
         run: ./contract-test.sh ../../src-tauri/binaries/omnisci-desktop-aarch64-apple-darwin
 
-      - name: Build both bundles
+      - name: Build the bundle
         working-directory: desktop
-        run: |
-          rustup target add x86_64-apple-darwin
-          bun x tauri build --bundles app,dmg
-          bun x tauri build --bundles app,dmg --target x86_64-apple-darwin
+        run: bun x tauri build --bundles app,dmg
 
       - name: Verify what we are about to ship
         working-directory: desktop/src-tauri/target
         run: |
-          verify() {
-            local app="$1" arch="$2"
-            codesign --verify --deep --strict --verbose=2 "$app"
-            plutil -lint "$app/Contents/Info.plist"
-            test -x "$app/Contents/MacOS/OmniScientist"
-            test -x "$app/Contents/MacOS/omnisci-desktop"
-            for binary in OmniScientist omnisci-desktop; do
-              got=$(lipo -archs "$app/Contents/MacOS/$binary")
-              [ "$got" = "$arch" ] || { echo "$binary is $got, expected $arch" >&2; exit 1; }
-            done
-            echo "$arch bundle is intact"
-          }
-          verify release/bundle/macos/OmniScientist.app arm64
-          verify x86_64-apple-darwin/release/bundle/macos/OmniScientist.app x86_64
-          ls -la release/bundle/dmg x86_64-apple-darwin/release/bundle/dmg
+          app=release/bundle/macos/OmniScientist.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          test -x "$app/Contents/MacOS/OmniScientist"
+          test -x "$app/Contents/MacOS/omnisci-desktop"
+          for binary in OmniScientist omnisci-desktop; do
+            got=$(lipo -archs "$app/Contents/MacOS/$binary")
+            [ "$got" = "arm64" ] || { echo "$binary is $got, expected arm64" >&2; exit 1; }
+          done
+          echo "arm64 bundle is intact"
+          ls -la release/bundle/dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: OmniScientist-macos-dmg
-          path: |
-            desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          path: desktop/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error

@@ -1,0 +1,109 @@
+name: desktop-linux
+
+# Builds the Tauri desktop app for Linux x86_64: a .deb (Ubuntu/Debian) and an
+# .AppImage (single portable file, runs anywhere).
+#
+# The runner is headless, so nobody here ever sees the window; what this job can
+# and does verify is the package structure and the sidecar service itself
+# (start, health, interface assets). GUI 行为靠 Windows/macOS 上的人工验收兜底。
+#
+# NOTE(v0.2.0 transition): release.yml 还在按老浏览器模式的 tar.gz 资产发版，
+# 切到安装包资产集之前不要打 tag。
+
+on:
+  push:
+    branches: ["main", "launch/**"]
+    paths: ["desktop/**", "cli/**", ".github/workflows/desktop-linux.yml"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop-linux.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: OmniScientist .deb + .AppImage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      # Tauri 在 Linux 上的系统依赖（webkit2gtk 是窗口本体）
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev patchelf
+
+      - name: The five implementations must stay in step
+        run: python3 scripts/check_parity.py
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: cargo-linux-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      - name: Build the sidecar service binary
+        run: |
+          (cd cli && bun install --frozen-lockfile)
+          cd desktop
+          bun install --frozen-lockfile
+          bun run build:desktop
+          mkdir -p src-tauri/binaries
+          cp dist-desktop/omnisci-desktop src-tauri/binaries/omnisci-desktop-x86_64-unknown-linux-gnu
+
+      - name: Build the packages
+        working-directory: desktop
+        run: bun x tauri build --bundles deb,appimage
+
+      - name: Verify what we are about to ship
+        run: |
+          deb=$(ls desktop/src-tauri/target/release/bundle/deb/*.deb | head -1)
+          appimage=$(ls desktop/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          test -n "$deb" && test -n "$appimage"
+          ls -la "$deb" "$appimage"
+
+          # .deb 里必须真有壳和 sidecar 两个可执行
+          dpkg-deb -c "$deb" | grep -E "usr/bin/OmniScientist$|omnisci-desktop" \
+            || { echo "deb 里缺壳或 sidecar" >&2; exit 1; }
+
+          # sidecar 起服务做健康与首屏资源检查（跟 Windows 那条同款门禁）
+          exe=desktop/src-tauri/binaries/omnisci-desktop-x86_64-unknown-linux-gnu
+          export HOME="$RUNNER_TEMP/home"; mkdir -p "$HOME"
+          "$exe" --no-open --verbose > "$RUNNER_TEMP/service.log" 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          lock="$HOME/.omnisci/desktop.lock"
+          for i in $(seq 1 60); do [ -f "$lock" ] && break; sleep 0.5; done
+          [ -f "$lock" ] || { echo "服务没写出 lock 文件"; cat "$RUNNER_TEMP/service.log"; exit 1; }
+          port=$(python3 -c "import json; print(json.load(open('$lock'))['port'])")
+          token=$(python3 -c "import json; print(json.load(open('$lock'))['token'])")
+          curl -sf "http://127.0.0.1:$port/api/health" > /dev/null
+          echo "health ok on port $port"
+          jar="$RUNNER_TEMP/cookies.txt"
+          curl -sf -c "$jar" -L "http://127.0.0.1:$port/?t=$token" > /dev/null
+          for asset in / /assets/omni-logo.svg /splash.html; do
+            size=$(curl -sf -b "$jar" "http://127.0.0.1:$port$asset" | wc -c)
+            [ "$size" -ge 512 ] || { echo "$asset 只有 $size 字节，可疑" >&2; exit 1; }
+            echo "asset ok $asset -> $size bytes"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OmniScientist-linux
+          path: |
+            desktop/src-tauri/target/release/bundle/deb/*.deb
+            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
