@@ -73,17 +73,24 @@ jobs:
       - name: Build the sidecar service binary
         shell: pwsh
         run: |
-          cd cli; bun install --frozen-lockfile; cd ..
+          cd cli; bun install --frozen-lockfile; if ($LASTEXITCODE -ne 0) { throw "bun install in cli failed" }; cd ..
           cd desktop
           bun install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw "bun install in desktop failed" }
           bun run build:desktop
+          if ($LASTEXITCODE -ne 0) { throw "build:desktop failed" }
           New-Item -ItemType Directory -Force src-tauri\binaries | Out-Null
           Copy-Item dist-desktop\omnisci-desktop.exe src-tauri\binaries\omnisci-desktop-x86_64-pc-windows-msvc.exe
 
       - name: Build the installer
         shell: pwsh
         working-directory: desktop
-        run: bun x tauri build --bundles nsis
+        run: |
+          # The cargo cache can resurrect an older version's installer, and the
+          # verify step globs *-setup.exe; only this build's copy may exist.
+          Remove-Item src-tauri\target\release\bundle\nsis\*-setup.exe -ErrorAction SilentlyContinue
+          bun x tauri build --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
       - name: Verify what we are about to ship
         shell: pwsh
@@ -104,36 +111,73 @@ jobs:
           $exe = "desktop\src-tauri\binaries\omnisci-desktop-x86_64-pc-windows-msvc.exe"
           $home_ = Join-Path $env:RUNNER_TEMP "home"
           New-Item -ItemType Directory -Force $home_ | Out-Null
+          $origHome = $env:USERPROFILE
           $env:USERPROFILE = $home_
+          # Keep the smoke test out of the real data dir: it must not seed
+          # %LOCALAPPDATA%\OmniScientist (the very dir the install check reads)
+          # or spawn detached venv installs that keep writing after the kill.
+          $env:OMNISCI_AUTO_INSTALL = "0"
+          $env:OMNISCI_DATA_DIR = Join-Path $home_ "data"
           $proc = Start-Process -FilePath $exe -ArgumentList "--no-open","--verbose" -PassThru
           try {
+            # Poll until the lock file parses and carries a port: testing bare
+            # existence can catch it between create and write.
             $lock = Join-Path $home_ ".omnisci\desktop.lock"
-            for ($i = 0; $i -lt 60 -and -not (Test-Path $lock); $i++) { Start-Sleep -Milliseconds 500 }
-            if (-not (Test-Path $lock)) { throw "the service never wrote a lock file" }
-            $port = (Get-Content $lock | ConvertFrom-Json).port
-            $health = Invoke-RestMethod "http://127.0.0.1:$port/api/health"
+            $sess = $null
+            for ($i = 0; $i -lt 60 -and -not $sess; $i++) {
+              Start-Sleep -Milliseconds 500
+              if (Test-Path $lock) {
+                try { $j = Get-Content $lock -Raw | ConvertFrom-Json; if ($j.port) { $sess = $j } } catch {}
+              }
+            }
+            if (-not $sess) { throw "the service never published a usable lock file" }
+            $port = $sess.port
+            $health = Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 15
             if (-not $health.ok) { throw "health check failed" }
             Write-Host "health ok on port $port"
 
-            $token = (Get-Content $lock | ConvertFrom-Json).token
+            $token = $sess.token
             $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-            Invoke-WebRequest -Uri "http://127.0.0.1:$port/?t=$token" -WebSession $session -UseBasicParsing | Out-Null
+            Invoke-WebRequest -Uri "http://127.0.0.1:$port/?t=$token" -WebSession $session -UseBasicParsing -TimeoutSec 15 | Out-Null
             foreach ($asset in @("/", "/assets/omni-logo.svg", "/splash.html")) {
-              $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port$asset" -WebSession $session -UseBasicParsing
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port$asset" -WebSession $session -UseBasicParsing -TimeoutSec 15
               if ($r.StatusCode -ne 200) { throw "$asset returned $($r.StatusCode)" }
               if ($r.RawContentLength -lt 512) { throw "$asset came back suspiciously small ($($r.RawContentLength) bytes)" }
               Write-Host "asset ok $asset -> $($r.RawContentLength) bytes"
             }
           } finally {
-            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+            # shell32 resolves the installer's $LOCALAPPDATA from the HKCU
+            # "User Shell Folders" value %USERPROFILE%\AppData\Local, expanded
+            # with the environment the installer inherits. Leaving the smoke-test
+            # override in place redirects the whole silent install into
+            # RUNNER_TEMP, which is exactly the red X this step used to produce.
+            $env:USERPROFILE = $origHome
+            Remove-Item Env:OMNISCI_AUTO_INSTALL, Env:OMNISCI_DATA_DIR -ErrorAction SilentlyContinue
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            [void]$proc.WaitForExit(5000)
           }
 
           # The installer itself must install: silent mode, then the shell, the
           # sidecar and the uninstaller must all land.
-          Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
+          $inst = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
+          Write-Host "installer exit code = $($inst.ExitCode)"
+          if ($inst.ExitCode -ne 0) { throw "installer exited $($inst.ExitCode)" }
           $installed = Join-Path $env:LOCALAPPDATA "OmniScientist"
-          foreach ($file in @("OmniScientist.exe", "omnisci-desktop.exe", "uninstall.exe")) {
-            if (-not (Test-Path (Join-Path $installed $file))) { throw "silent install missing $file" }
+          $missing = @("OmniScientist.exe", "omnisci-desktop.exe", "uninstall.exe") |
+                     Where-Object { -not (Test-Path (Join-Path $installed $_)) }
+          if ($missing) {
+            # 装丢了就把候选位置全摆出来，别让下一轮还在猜
+            Write-Host "missing $($missing -join ', '), hunting:"
+            foreach ($cand in @($env:LOCALAPPDATA, "$env:LOCALAPPDATA\Programs", $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData)) {
+              if ($cand -and (Test-Path $cand)) {
+                Get-ChildItem $cand -Directory -ErrorAction SilentlyContinue |
+                  Where-Object Name -like "*mni*" |
+                  ForEach-Object { Write-Host ("  candidate " + $_.FullName) }
+              }
+            }
+            Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall", "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+              ForEach-Object { $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; if ($p -and (("" + $p.DisplayName) -like "*OmniScientist*")) { Write-Host ("  registry " + $p.DisplayName + " -> " + $p.InstallLocation) } }
+            throw "silent install missing $($missing -join ', ')"
           }
           Write-Host "silent install ok -> $installed"
 
