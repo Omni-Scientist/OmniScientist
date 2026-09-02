@@ -950,6 +950,7 @@ export const apiFetch = async (request: Request): Promise<Response> => {
 
       const encoder = new TextEncoder();
       let streamClosed = false;
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           const emit: Emit = (event) => {
@@ -960,6 +961,10 @@ export const apiFetch = async (request: Request): Promise<Response> => {
               streamClosed = true;
             }
           };
+          // 长工具（尤其编译）几分钟不吐事件，Bun.serve 的 idleTimeout 顶格
+          // 也就 255 秒，静默一过连接就被闲死，界面看起来像"跑着跑着停了"。
+          // 每 20 秒打一拍心跳，前端对未知事件类型天然忽略。
+          heartbeat = setInterval(() => emit({ type: "ping" } as TransportEvent), 20_000);
           void runMessage(runtime, content, emit)
             .catch((error) => {
               const detail = errorMessage(error);
@@ -992,6 +997,7 @@ export const apiFetch = async (request: Request): Promise<Response> => {
                 runtime.status = "idle";
                 persistRuntime(runtime, true);
               }
+              clearInterval(heartbeat);
               if (!streamClosed) {
                 streamClosed = true;
                 try { controller.close(); } catch { /* The browser already disconnected. */ }
@@ -1000,6 +1006,7 @@ export const apiFetch = async (request: Request): Promise<Response> => {
         },
         cancel() {
           streamClosed = true;
+          clearInterval(heartbeat);
           // 两个坑都踩过才有这段。最早断开只停推送，AgentLoop 在服务端跑到底，
           // 关掉标签页之后模型照调、钱照烧；改成立刻拨闸之后，一次无辜的刷新
           // 又会把跑了半小时的运行当场打死。所以给 30 秒宽限：页面回来
