@@ -22,7 +22,6 @@ More options at <https://omni-scientist.github.io/>.
 | `OmniSci-Desktop-Windows-x64-setup.exe` | Desktop app, Windows installer |
 | `OmniSci-Desktop-macOS.zip` | Desktop app, macOS (Apple silicon) |
 | `OmniSci-Desktop-Linux-x64.deb` | Desktop app, Ubuntu/Debian package |
-| `omnisci-CLI-*.tar.gz`, `omnisci-CLI-Windows-x64.zip` | Terminal agent |
 | `omnisci-skill.zip` | Skill, unpack into `~/.claude/skills/` |
 
 Verify with `sha256sum -c SHA256SUMS`.

@@ -12,6 +12,13 @@
 #   $env:VERSION = 'v0.1.0'          pin a release instead of taking the latest
 #   $env:BIN_DIR = 'C:\tools'        install somewhere else
 #
+
+# The CLI edition is discontinued (2026-09-02). The desktop app and the Claude
+# Code skill are the supported editions; releases stopped carrying CLI binaries.
+Write-Host "The OmniScientist CLI has been discontinued."
+Write-Host "Get the desktop app or the Claude Code skill instead:"
+Write-Host "  https://github.com/Omni-Scientist/OmniScientist/releases/latest"
+exit 1
 # STATUS: the Windows build is produced by CI but has not been run by anyone on a
 # Windows machine. Treat it as untested. docs/INSTALL.md says what to check, and a
 # report of what works would be welcome.

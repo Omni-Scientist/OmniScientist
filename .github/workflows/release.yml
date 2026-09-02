@@ -1,7 +1,7 @@
 name: Release
 
 # 打 tag 一条工作流出完整发行版。三条 desktop-*.yml 被 workflow_call 进来（跟平时
-# 当构建检查的是同一份逻辑，不写第二遍），CLI 矩阵和 skill 在这里打包，全部产物以
+# 当构建检查的是同一份逻辑，不写第二遍），skill 在这里打包，全部产物以
 # artifact 落在同一次 run 里，publish 一步收齐、改稳定名、算一份 SHA256SUMS、一次
 # 挂上 release。没有跨工作流等待，也没有"谁先建 release"的竞态。
 
@@ -37,99 +37,6 @@ jobs:
   # 黑话：omnisci-darwin-arm64 要求用户同时知道 darwin 是 macOS、arm64 是 M 系
   # 芯片、没后缀的是可执行文件，四个知识点才点得对一个链接，它在 v0.1.5 只被下载
   # 了 3 次，是全场垫底。
-  #
-  # 一律用原生 runner 编。CLI 依赖 @resvg/resvg-js 这个原生模块，交叉编译能编出
-  # 文件，但塞进去的 .node 是宿主架构的，而它是懒加载的：只有渲染公式那一刻才炸。
-  cli:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Intel Mac 不发（决定于 2026-08-18）。install.sh 在 Intel Mac 上仍会去下
-          # omnisci-darwin-x86_64 并拿到 404，这是明知的取舍，不是漏了。
-          - { runner: ubuntu-latest,    bin: omnisci,     asset: omnisci-CLI-Linux-x64.tar.gz }
-          - { runner: ubuntu-24.04-arm, bin: omnisci,     asset: omnisci-CLI-Linux-ARM64.tar.gz }
-          - { runner: macos-latest,     bin: omnisci,     asset: omnisci-CLI-macOS.tar.gz }
-          - { runner: windows-latest,   bin: omnisci.exe, asset: omnisci-CLI-Windows-x64.zip }
-    runs-on: ${{ matrix.runner }}
-    # ARM Linux runner 在私有仓库上不免费，缺了不该拖垮整个发布
-    continue-on-error: ${{ matrix.runner == 'ubuntu-24.04-arm' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "${{ env.BUN_VERSION }}" }
-      - working-directory: cli
-        run: bun install --frozen-lockfile
-
-      # skill 嵌进二进制，发行版因此是单个文件：没有要解压的包，也没有必须保持
-      # 完整的目录结构。生成物是提交过的，这里顺带确认它没漂。
-      - name: 确认内嵌清单没漂
-        shell: bash
-        working-directory: cli
-        run: |
-          bun run tools/gen-skill-assets.ts
-          git diff --exit-code src/skill-assets.generated.ts
-
-      - name: 编译
-        shell: bash
-        working-directory: cli
-        run: |
-          bun build --compile --minify --define 'process.env.DEV="false"' \
-            src/cli.tsx --outfile "dist/${{ matrix.bin }}"
-
-      # Apple Silicon 上内核拒绝执行没签名的可执行文件。ad-hoc 签名免费、与
-      # Gatekeeper 无关（curl 下载的文件不带隔离属性，根本不会被问）。
-      - name: ad-hoc 签名
-        if: runner.os == 'macOS'
-        working-directory: cli
-        run: codesign --force --sign - "dist/${{ matrix.bin }}"
-
-      - name: 自检：旁边什么都没有也要能跑
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: cli
-        run: |
-          tmp=$(mktemp -d); cp "dist/${{ matrix.bin }}" "$tmp/omnisci"
-          ( cd "$tmp" && HOME="$tmp/home" ./omnisci --help | head -1 )
-
-      # CLI 以前是裸二进制直接挂上去：100MB 不压缩，而且没有扩展名。打包之后
-      # 下载量最大的 Windows 那份从 101MB 降到 40MB 出头，Unix 那几份同理。
-      # Unix 用 tar.gz 不用 zip，是因为 tar 天然保执行位，不依赖解压工具的实现。
-      # Windows 走 .NET 的 ZipFile。不用 7z：那是 runner 碰巧预装的外部依赖，
-      # 普通 Windows 上没有（2026-08-25 在一台真机上确认过），CI 不该赌这个。
-      # 也不用 Compress-Archive：那是 PowerShell 5.1 自带的实现，打大 exe 会
-      # "Stream was not readable" 直接崩。ZipFile 是 Win10 起必有的组件。
-      - name: 打包（Windows）
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: cli/dist
-        run: |
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $stage = Join-Path $PWD 'stage'
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item '${{ matrix.bin }}' $stage
-          [System.IO.Compression.ZipFile]::CreateFromDirectory(
-            $stage, (Join-Path $PWD '${{ matrix.asset }}'),
-            [System.IO.Compression.CompressionLevel]::Optimal, $false)
-          Remove-Item -Recurse -Force $stage
-          Get-Item '${{ matrix.asset }}' | ForEach-Object { '{0}  {1:N1} MB' -f $_.Name, ($_.Length / 1MB) }
-
-      - name: 打包（macOS / Linux）
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: cli/dist
-        run: |
-          tar czf "${{ matrix.asset }}" "${{ matrix.bin }}"
-          ls -lh "${{ matrix.asset }}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset }}
-          path: cli/dist/${{ matrix.asset }}
-          if-no-files-found: error
-          # v4 的 artifact 同名即 409。不加这个，"Re-run all jobs" 一按必炸。
-          overwrite: true
-
   skill:
     runs-on: ubuntu-latest
     steps:
@@ -150,7 +57,7 @@ jobs:
     # needs 的默认语义：全都成功才发。半套产物发出去，缺的那个平台的用户只会拿到
     # 404，而且只有他们会遇到，我们自己看不见。Linux ARM 那一格自己带
     # continue-on-error，它挂了不算 job 失败，所以"ARM 可缺席"这条原意还在。
-    needs: [desktop-windows, desktop-macos, desktop-linux, cli, skill]
+    needs: [desktop-windows, desktop-macos, desktop-linux, skill]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -196,9 +103,6 @@ jobs:
             OmniSci-Desktop-Windows-x64-setup.exe \
             OmniSci-Desktop-macOS.zip \
             OmniSci-Desktop-Linux-x64.deb \
-            omnisci-CLI-Linux-x64.tar.gz \
-            omnisci-CLI-macOS.tar.gz \
-            omnisci-CLI-Windows-x64.zip \
             omnisci-skill.zip
           do
             if [ -f "release/$asset" ]; then
@@ -208,9 +112,6 @@ jobs:
               missing=1
             fi
           done
-          # Linux ARM 允许缺席（runner 在私有仓库上不免费），缺了只提醒不拦。
-          [ -f release/omnisci-CLI-Linux-ARM64.tar.gz ] \
-            || echo "::warning::omnisci-CLI-Linux-ARM64.tar.gz 这次没出来（Linux ARM 允许缺席）"
           exit $missing
 
       # 校验和对最终要挂的字节算，只发 SHA256SUMS 一个文件。桌面版的"下载新版本"

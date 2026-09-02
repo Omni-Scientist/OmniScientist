@@ -11,6 +11,14 @@
 #   BIN_DIR=/usr/local/bin sh ...    install somewhere else
 set -eu
 
+# The CLI edition is discontinued (2026-09-02). The desktop app and the Claude
+# Code skill are the supported editions; releases stopped carrying CLI binaries,
+# so this script now says so plainly instead of handing you a 404.
+echo "The OmniScientist CLI has been discontinued." >&2
+echo "Get the desktop app or the Claude Code skill instead:" >&2
+echo "  https://github.com/Omni-Scientist/OmniScientist/releases/latest" >&2
+exit 1
+
 REPO="Omni-Scientist/OmniScientist"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 VERSION="${VERSION:-latest}"

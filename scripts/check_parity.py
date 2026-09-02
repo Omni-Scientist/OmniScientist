@@ -224,7 +224,6 @@ for token, where, why in (
     ("OmniSci-Desktop-macOS.zip", ".github/workflows/release.yml", "publish 点名的 macOS 桌面包名"),
     ("OmniSci-Desktop-Linux-x64.deb", ".github/workflows/release.yml", "publish 改名并点名的 Linux 桌面包名"),
     ("OmniSci-Desktop-Windows-x64-setup.exe", ".github/workflows/release.yml", "publish 改名并点名的 Windows 桌面包名"),
-    ("omnisci-CLI-Windows-x64.zip", ".github/workflows/release.yml", "Windows CLI 产物名"),
 ):
     must_contain(where, token, "update.ts 的产物匹配是照着这个名字写的：%s" % why)
 
@@ -247,32 +246,10 @@ must_not_match(
 )
 
 # ---------------------------------------------------------------------------
-# 安装脚本能拼出来的产物名，release 必须真的构建
-#
-# 上面几条只验"名字的写法一致"，验不出"这个名字压根没人构建"。后者才是会让用户
-# 拿到 404 的那种，而且只有那个平台的用户会遇到，我们自己永远撞不到。
-#
-# 所以这里按平台把安装脚本会请求的名字全列出来，逐个回 release.yml 里点名。
-# 只认 matrix 里的那几行。不能拿整个文件去 grep：publish 那一步有一份"必须有的
-# 产物"名单，整文件搜索会搜到它，于是矩阵里删掉一格照样过 —— 自己证明自己。
-_release_body = read(".github/workflows/release.yml") or ""
-_matrix_lines = [ln for ln in _release_body.splitlines() if re.search(r"^\s*- \{ runner:", ln)]
-_matrix = "\n".join(_matrix_lines)
-
-# Intel Mac **有意不发**，2026-08-18 定的。改名之后所有 Mac 都会命中同一个
-# omnisci-CLI-macOS.tar.gz，那是个 arm64 的二进制，所以 install.sh 现在在 Intel Mac 上
-# 直接报错说清楚，而不是让人装完才发现跑不了。
-for asset, why in (
-    ("asset: omnisci-CLI-Linux-x64.tar.gz", "install.sh 的 Linux x64"),
-    ("asset: omnisci-CLI-Linux-ARM64.tar.gz", "install.sh 的 Linux ARM64"),
-    ("asset: omnisci-CLI-macOS.tar.gz", "install.sh 的 Apple silicon"),
-    ("asset: omnisci-CLI-Windows-x64.zip", "install.ps1（ARM64 也回落到这个）"),
-):
-    checked += 1
-    if asset not in _matrix:
-        problems.append(
-            ".github/workflows/release.yml 的 cli matrix 不构建 %r\n"
-            "      安装脚本会去下它，构建不出来就是那个平台的用户拿到 404：%s" % (asset, why))
+# CLI 停发（2026-09-02 定）：release 只出桌面三平台 + skill。install.sh / install.ps1
+# 保留在原地，但开头就明确报停发并指去 releases 页，绝不让老用户拿到裸 404。
+for rel in ("install.sh", "install.ps1"):
+    must_contain(rel, "discontinued", "CLI 安装脚本必须明确自报停发，而不是下载 404")
 
 # 0.2.0 起桌面包不走 release.yml 的 matrix，由它 workflow_call 三条 desktop-*.yml
 # 在原生 runner 上构建。两头都点一遍：工作流得可被调用，release.yml 得真在调。
