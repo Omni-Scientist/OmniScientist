@@ -234,11 +234,25 @@ function noPythonError(tried: string[]): Error {
   );
 }
 
+/**
+ * PATH 上撞见的、住在别人家 venv 里的 python（上一级有 pyvenv.cfg）排到最后。
+ * 拿它当基底建我们的 venv，等于把根扎进别的软件的私有环境，人家一升级或卸载
+ * 就断根（2026-09-02 Windows 实录：hermes-agent 的 venv python 抢到了第一）。
+ */
+function deprioritizeForeignVenvs(paths: string[]): string[] {
+  const inVenv = (p: string): boolean => {
+    try { return existsSync(join(dirname(p), "..", "pyvenv.cfg")); } catch { return false; }
+  };
+  return [...paths.filter((p) => !inVenv(p)), ...paths.filter(inVenv)];
+}
+
 function resolvePython(useVenv: boolean): string[] {
   const tried: string[] = [];
   const seen = new Set<string>();
   for (const source of pythonSources(useVenv)) {
-    const argvs = "argv" in source ? [source.argv] : whichAll(source.lookup).map((path) => [path]);
+    const argvs = "argv" in source
+      ? [source.argv]
+      : deprioritizeForeignVenvs(whichAll(source.lookup)).map((path) => [path]);
     for (const argv of argvs) {
       if (!firstTimeSeen(seen, argv)) continue;
       tried.push(argv.join(" "));
@@ -255,7 +269,7 @@ async function resolvePythonAsync(useVenv: boolean): Promise<string[]> {
   for (const source of pythonSources(useVenv)) {
     const argvs = "argv" in source
       ? [source.argv]
-      : (await whichAllAsync(source.lookup)).map((path) => [path]);
+      : deprioritizeForeignVenvs(await whichAllAsync(source.lookup)).map((path) => [path]);
     for (const argv of argvs) {
       if (!firstTimeSeen(seen, argv)) continue;
       tried.push(argv.join(" "));
