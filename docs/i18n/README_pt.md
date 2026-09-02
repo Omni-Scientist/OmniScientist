@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-O agente de terminal também é instalado em uma linha. Use `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh` no macOS e Linux, e `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex` no Windows.
+A edição de terminal (CLI) deixou de ser distribuída na 0.2.1. O mesmo motor vive no aplicativo de desktop; usuários do Claude Code usam o skill acima.
 
 ## O espaço de trabalho
 
 Cada etapa flui para a transcrição, e cada artefato é adicionado ao registro de pesquisa no instante em que é criado. Isso inclui a saída do matplotlib, o script que a gerou, a tabela de dados correspondente e, ao final, o artigo compilado.
 
-O espaço de trabalho é um aplicativo web local. A barra de endereço nas capturas de tela acima exibe `127.0.0.1` porque essa é a implantação completa. Em um celular, o layout se reduz a uma única coluna. Fechar a aba interrompe a execução após um período de carência de 30 segundos, portanto recarregar a página a mantém viva.
+O espaço de trabalho é um aplicativo web local. A barra de endereço nas capturas de tela acima exibe `127.0.0.1` porque essa é a implantação completa. Em um celular, o layout se reduz a uma única coluna. Fechar a página não interrompe mais a execução; a pesquisa continua em segundo plano e a próxima abertura mostra tudo o que foi produzido.
 
 A interface segue o idioma do navegador no primeiro lançamento e pode ser alternada na barra de ferramentas, em inglês, chinês simplificado e tradicional, francês, espanhol, japonês, coreano, português, alemão e russo.
 
@@ -174,18 +173,18 @@ Notas sobre as duas edições de skill, os arquivos gerados e a compilação por
 
 ## Status
 
-Software em fase inicial, versão `0.1.2`. As interfaces ainda estão mudando e os lançamentos podem alterá-las.
+Software em fase inicial, versão `0.2.1`. As interfaces ainda estão mudando e os lançamentos podem alterá-las.
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
 No macOS, o aplicativo de desktop é verificado por meio de instalação, inicialização, barra de menus, saída, reinicialização, instância única, vinculação de loopback e assinatura, em 15.7.7 / M3, e uma execução completa de artigo no macOS é a próxima da lista. As builds do Windows vêm da CI e compilam, e os caminhos de código de que precisam estão escritos para elas. O que ainda falta é um relatório de uma máquina Windows real. Macs Intel compilam a partir do código-fonte, veja [Compilação a partir do código-fonte](#build-from-source).
 
-Os artefatos de lançamento estão listados em um único `SHA256SUMS`, que `install.sh` e `install.ps1` verificam antes de instalar.
+Os artefatos da release ficam em um único `SHA256SUMS`; a verificação de atualização do aplicativo de desktop os confere antes de baixar.
 
 ## Exemplos de artigos
 

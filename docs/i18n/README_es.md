@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-El agente de terminal también se instala en una sola línea. Usa `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh` en macOS y Linux, y `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex` en Windows.
+La edición de terminal (CLI) dejó de distribuirse en la 0.2.1. El mismo motor vive en la aplicación de escritorio; los usuarios de Claude Code usan el skill de arriba.
 
 ## El espacio de trabajo
 
 Cada etapa se transmite a la transcripción, y cada artefacto llega al registro de investigación en el momento en que se crea. Eso cubre la salida de matplotlib, el script que la generó, la tabla de datos subyacente y, al final, el artículo compilado.
 
-El espacio de trabajo es una aplicación web local. La barra de direcciones de las capturas de pantalla anteriores muestra `127.0.0.1` porque ese es el despliegue completo. El diseño se colapsa a una sola columna en un teléfono. Cerrar la pestaña detiene la ejecución tras un período de gracia de 30 segundos, por lo que una actualización de la página la mantiene activa.
+El espacio de trabajo es una aplicación web local. La barra de direcciones de las capturas de pantalla anteriores muestra `127.0.0.1` porque ese es el despliegue completo. El diseño se colapsa a una sola columna en un teléfono. Cerrar la página ya no detiene la ejecución; la investigación continúa en segundo plano y el siguiente arranque muestra todo lo producido.
 
 La interfaz sigue el idioma del navegador en el primer lanzamiento y se puede cambiar desde la barra de herramientas, entre: inglés, chino simplificado y tradicional, francés, español, japonés, coreano, portugués, alemán y ruso.
 
@@ -174,18 +173,18 @@ Las notas sobre las dos ediciones de habilidades, los archivos generados y la co
 
 ## Estado
 
-Software en fase inicial, versión `0.1.2`. Las interfaces aún están evolucionando y las versiones pueden cambiarlas.
+Software en fase inicial, versión `0.2.1`. Las interfaces aún están evolucionando y las versiones pueden cambiarlas.
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
 En macOS, la aplicación de escritorio se verifica mediante instalación, lanzamiento, barra de menús, salida, reinicio, instancia única, vinculación de loopback y firma, en 15.7.7 / M3, y una ejecución de extremo a extremo de un artículo en macOS es el siguiente paso en esa lista. Las compilaciones de Windows vienen de CI y compilan, y las rutas de código que necesitan están escritas para ellas. Lo que aún falta es un informe desde una máquina Windows real. Los Mac con Intel compilan desde el código fuente; consulte [Compilar desde el código fuente](#build-from-source).
 
-Los activos de la versión se enumeran en un único `SHA256SUMS`, que `install.sh` y `install.ps1` comprueban antes de instalar.
+Los recursos de la release se listan en un único `SHA256SUMS`; la comprobación de actualizaciones de la aplicación de escritorio los verifica antes de descargar.
 
 ## Artículos de muestra
 

@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-ターミナルエージェントも一行でインストールできます。macOS と Linux では `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh` を、Windows では `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex` を使用してください。
+ターミナル版（CLI）は 0.2.1 で配布終了しました。同じエンジンはデスクトップ版に内蔵されており、Claude Code ユーザーは上記の skill をご利用ください。
 
 ## ワークスペース
 
 各ステージはトランスクリプトにストリーミングされ、すべてのアーティファクトは生成された瞬間に研究ログに記録されます。これには、matplotlib の出力、それを描画したスクリプト、その背後にあるデータテーブル、そして最後にコンパイルされた論文が含まれます。
 
-ワークスペースはローカル Web アプリです。上のスクリーンショットのアドレスバーには `127.0.0.1` と表示されていますが、これはデプロイメント全体がこれだけだからです。レイアウトはスマートフォンでは 1 カラムに折りたたまれます。タブを閉じると、30 秒の猶予期間の後に実行が停止します。したがって、ページをリフレッシュすれば実行は継続されます。
+ワークスペースはローカル Web アプリです。上のスクリーンショットのアドレスバーには `127.0.0.1` と表示されていますが、これはデプロイメント全体がこれだけだからです。レイアウトはスマートフォンでは 1 カラムに折りたたまれます。タブを閉じても実行は止まりません。研究はバックグラウンドで続き、次に開いたときに成果がすべて表示されます。
 
 インターフェースは初回起動時にブラウザの言語に従い、ツールバーから切り替えられます。対応言語は、英語、簡体字中国語、繁体字中国語、フランス語、スペイン語、日本語、韓国語、ポルトガル語、ドイツ語、ロシア語です。
 
@@ -174,18 +173,18 @@ OmniScientist/
 
 ## ステータス
 
-初期ソフトウェア、バージョン`0.1.2`。インターフェースはまだ流動的であり、リリースによって変更される可能性があります。
+初期ソフトウェア、バージョン`0.2.1`。インターフェースはまだ流動的であり、リリースによって変更される可能性があります。
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
 macOS 15.7.7 / M3 上で、デスクトップアプリはインストール、起動、メニューバー、終了、再起動、シングルインスタンス、ループバックバインド、署名について検証されています。次に、macOSでのエンドツーエンドの論文実行が予定されています。WindowsビルドはCIから生成され、コンパイルされます。それらが必要とするコードパスは、それら向けに記述されています。まだ欠けているのは、実際のWindowsマシンからのレポートです。Intel Macはソースからビルドできます。[ソースからのビルド](#build-from-source)を参照してください。
 
-リリースアセットは単一の`SHA256SUMS`にリストされており、`install.sh`と`install.ps1`はインストール前にそれをチェックします。
+リリース資産は 1 つの `SHA256SUMS` にまとめられ、デスクトップ版の更新チェックはダウンロード前にこれを照合します。
 
 ## サンプル論文
 

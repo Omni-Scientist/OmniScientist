@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64 .deb](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64 installer](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-The terminal agent also installs in one line. Use `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh` on macOS and Linux, and `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex` on Windows.
+The terminal edition (CLI) is discontinued as of 0.2.1. The desktop app carries the same engine, and Claude Code users take the skill above.
 
 ## The workspace
 
 Each stage streams into the transcript, and every artifact lands in the research log the moment it exists. That covers the matplotlib output, the script that drew it, the data table behind it, and at the end the compiled paper.
 
-The workspace is a local web app. The address bar in the screenshots above reads `127.0.0.1` because that is the entire deployment. The layout collapses to one column on a phone. Closing the tab stops the run after a 30-second grace period, so a page refresh keeps it alive.
+The workspace is a local web app. The address bar in the screenshots above reads `127.0.0.1` because that is the entire deployment. The layout collapses to one column on a phone. Closing the page no longer stops a run. Research keeps going in the background, and the next launch shows everything it produced.
 
 The interface follows the browser's language on first launch and is switched from the toolbar, in English, Simplified and Traditional Chinese, French, Spanish, Japanese, Korean, Portuguese, German and Russian.
 
@@ -133,7 +132,7 @@ bun install
 bun run build:desktop                # -> dist-desktop/omnisci-desktop
 ```
 
-The desktop launcher is pure TypeScript and cross-compiles with `--target`. The CLI is built on the platform it runs on, because it pulls a native module for formula rendering and a cross-built binary carries the wrong architecture's copy, which surfaces the first time a formula is rendered. CI builds every CLI artifact on its own platform.
+The desktop launcher is pure TypeScript and cross-compiles with `--target`; it has no native dependencies.
 
 ## Tests
 
@@ -158,15 +157,15 @@ OmniScientist/
 │   ├── datasets/          provenance and split manifest
 │   └── scripts/data.py    list, fetch and verify public research data
 ├── skill/             the Claude Code edition, self-contained
-├── cli/               the terminal agent (TypeScript, compiled with Bun)
-│   └── skills/omnisci/    its own edition of the skill
+├── cli/               the agent engine the desktop embeds (its standalone CLI build is discontinued)
+│   └── skills/omnisci/    the desktop's embedded edition of the skill
 ├── desktop/           the browser workspace, its gateway and the launcher
 │   ├── launcher/          the single executable: static assets, gateway, browser
 │   └── packaging/         macos, linux and windows
 ├── papers/            sample papers the engine wrote, with their scores
 ├── docs/              installation, usage, datasets, development
 ├── scripts/           repository hygiene
-├── install.sh         one-command CLI install for macOS and Linux
+├── install.sh         kept to tell old CLI users the CLI is discontinued
 └── install.ps1        the same for Windows
 ```
 
@@ -174,18 +173,18 @@ Notes on the two skill editions, the generated files and the per-platform build 
 
 ## Status
 
-Early software, version `0.1.2`. Interfaces are still moving and releases can change them.
+Early software, version `0.2.1`. Interfaces are still moving and releases can change them.
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
-On macOS the desktop app is verified through install, launch, menu bar, quit, relaunch, single instance, loopback binding and signature, on 15.7.7 / M3, and an end-to-end paper run on macOS is next on that list. The Windows builds come from CI and compile, and the code paths they need are written for them. What is still missing is a report from a real Windows machine. Intel Macs build from source, see [Build from source](#build-from-source).
+The desktop app has real-machine end-to-end paper runs on macOS (15.7.7 / M3) and on Windows, from install through a compiled PDF. Intel Macs build from source, see [Build from source](#build-from-source).
 
-Release assets are listed in a single `SHA256SUMS`, which `install.sh` and `install.ps1` check before installing.
+Release assets are listed in a single `SHA256SUMS`, and the desktop app's update check verifies downloads against it.
 
 ## Sample papers
 

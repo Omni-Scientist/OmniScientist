@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-Терминальный агент также устанавливается одной командой. Используйте `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh` на macOS и Linux, и `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex` на Windows.
+Терминальная версия (CLI) больше не распространяется начиная с 0.2.1. Тот же движок живёт в настольном приложении; пользователи Claude Code берут skill выше.
 
 ## Рабочее пространство
 
 Каждый этап транслируется в протокол, и каждый артефакт попадает в журнал исследования в момент своего появления. Это относится и к выводу matplotlib, и к скрипту, который его построил, и к таблице данных за ним, и в конце — к собранной статье.
 
-Рабочее пространство — это локальное веб-приложение. В адресной строке на скриншотах выше указано `127.0.0.1`, потому что это и есть весь деплой. На телефоне раскладка сворачивается в одну колонку. Закрытие вкладки останавливает выполнение после 30-секундной отсрочки, так что обновление страницы сохраняет его активным.
+Рабочее пространство — это локальное веб-приложение. В адресной строке на скриншотах выше указано `127.0.0.1`, потому что это и есть весь деплой. На телефоне раскладка сворачивается в одну колонку. Закрытие страницы больше не останавливает выполнение; исследование продолжается в фоне, и при следующем запуске видно всё, что получилось.
 
 Интерфейс при первом запуске следует языку браузера и переключается из панели инструментов на английский, упрощённый и традиционный китайский, французский, испанский, японский, корейский, португальский, немецкий и русский.
 
@@ -174,18 +173,18 @@ OmniScientist/
 
 ## Статус
 
-Раннее ПО, версия `0.1.2`. Интерфейсы всё ещё меняются, и релизы могут их изменить.
+Раннее ПО, версия `0.2.1`. Интерфейсы всё ещё меняются, и релизы могут их изменить.
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
 На macOS настольное приложение проверено по пунктам: установка, запуск, строка меню, выход, повторный запуск, одиночный экземпляр, loopback-привязка и подпись, на 15.7.7 / M3. Сквозной прогон статьи на macOS — следующий в этом списке. Сборки для Windows приходят из CI и компилируются, а необходимые им пути кода написаны для них. Чего пока не хватает — так это отчёта с реальной машины Windows. Intel Mac собираются из исходников, см. [Сборка из исходников](#build-from-source).
 
-Артефакты релиза перечислены в одном `SHA256SUMS`, который `install.sh` и `install.ps1` проверяют перед установкой.
+Ресурсы релиза перечислены в одном `SHA256SUMS`; проверка обновлений настольного приложения сверяет загрузки с ним.
 
 ## Примеры статей
 

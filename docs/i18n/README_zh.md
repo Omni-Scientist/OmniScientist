@@ -81,16 +81,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **桌面版** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **终端版** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-终端版也可以用一条命令安装。macOS 和 Linux 用 `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh`，Windows 用 `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex`。
+终端版（CLI）自 0.2.1 起停止发行。桌面版内置同一套引擎，Claude Code 用户使用上面的 skill。
 
 ## 工作台
 
 每个阶段边运行边输出。产出的东西按顺序落进右侧的研究记录，包括 matplotlib 生成的图、生成它的那段脚本、图背后的数据表，以及最后编译好的论文。
 
-工作台是一个本地网页。上面截图里地址栏的 `127.0.0.1` 就是全部部署。窄屏下自动收成单栏。关闭标签页 30 秒后才停止本轮运行，刷新页面不受影响。
+工作台是一个本地网页。上面截图里地址栏的 `127.0.0.1` 就是全部部署。窄屏下自动收成单栏。关闭页面也不会停止本轮运行；研究在后台继续，下次打开就能看到全部成果。
 
 界面语言首次启动时跟随浏览器，之后在工具栏切换，有简体中文、繁體中文、English、Français、Español、日本語、한국어、Português、Deutsch、Русский 十种。
 
@@ -178,18 +177,18 @@ OmniScientist/
 
 ## 状态
 
-早期版本，当前 `0.1.2`。接口仍在调整，版本之间可能变化。
+早期版本，当前 `0.2.1`。接口仍在调整，版本之间可能变化。
 
-| 平台 | 终端版 | 桌面版 |
-|---|---|---|
-| macOS arm64 | 已发布 | 已发布 |
-| Linux x86_64 | 已发布 | 已发布 |
-| Linux arm64 | 已发布 | 已发布 |
-| Windows x64 | 已发布 | 已发布 |
+| 平台 | 桌面版 |
+|---|---|
+| macOS arm64 | 已发布 |
+| Linux x86_64 | 已发布 |
+| Linux arm64 | 已发布 |
+| Windows x64 | 已发布 |
 
 桌面版在 macOS 15.7.7 / M3 上验证过安装、启动、菜单栏、退出、重启、单实例、回环绑定和签名，端到端跑出一篇论文是下一项。Windows 的两个包由 CI 构建并通过编译，相关代码路径也是为它写的，还缺一份来自真实 Windows 机器的运行反馈。Intel Mac 从源码构建，见[从源码构建](#从源码构建)。
 
-release 中所有产物的校验和集中在一个 `SHA256SUMS` 里，`install.sh` 和 `install.ps1` 安装前会核对。
+发行资产列在同一份 `SHA256SUMS` 里，桌面版的更新检查会先核对它再下载。
 
 ## 样例论文
 

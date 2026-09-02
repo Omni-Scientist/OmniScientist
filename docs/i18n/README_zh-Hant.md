@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-終端機代理程式也可以一行指令安裝。在 macOS 和 Linux 上使用 `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh`，在 Windows 上使用 `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex`。
+終端版（CLI）自 0.2.1 起停止發行。桌面版內建同一套引擎，Claude Code 使用者請用上面的 skill。
 
 ## 工作區
 
 每個階段都會串流到歷程記錄中，而每個產物一旦產生就會進入研究日誌。這涵蓋了 matplotlib 的輸出、繪製該輸出的腳本、其背後的資料表，以及最後編譯完成的論文。
 
-工作區是一個本機網頁應用程式。上方截圖中的網址列顯示 `127.0.0.1`，因為那就是整個部署。在手機上，版面會收合為單欄。關閉分頁後，系統會先給 30 秒寬限期，然後才停止執行；因此重新整理頁面就能讓它繼續執行。
+工作區是一個本機網頁應用程式。上方截圖中的網址列顯示 `127.0.0.1`，因為那就是整個部署。在手機上，版面會收合為單欄。關閉分頁也不會停止執行；研究會在背景繼續，下次開啟即可看到全部成果。
 
 介面在首次啟動時會採用瀏覽器的語言，並可從工具列切換；支援英文、簡體中文、繁體中文、法文、西班牙文、日文、韓文、葡萄牙文、德文和俄文。
 
@@ -174,18 +173,18 @@ OmniScientist/
 
 ## 狀態
 
-早期階段的軟體，版本 `0.1.2`。介面仍在變動，發行版本可能更改它們。
+早期階段的軟體，版本 `0.2.1`。介面仍在變動，發行版本可能更改它們。
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
 在 macOS 15.7.7 / M3 上，桌面應用程式已透過安裝、啟動、選單列、結束、重新啟動、單一實例、loopback 綁定與簽章驗證；清單上的下一項則是在 macOS 上進行端到端的論文執行。Windows 的建置由 CI 產生且能成功編譯，所需的程式碼路徑皆已為其撰寫。目前仍缺少來自真實 Windows 機器的報告。Intel Mac 可從原始碼建置，請參閱 [從原始碼建置](#build-from-source)。
 
-發行資產列於單一的 `SHA256SUMS` 中，`install.sh` 和 `install.ps1` 會在安裝前予以檢查。
+發行資產列在同一份 `SHA256SUMS` 裡，桌面版的更新檢查會先核對它再下載。
 
 ## 範例論文
 

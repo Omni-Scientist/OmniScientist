@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-Der Terminal-Agent lässt sich ebenfalls mit nur einer Zeile installieren. Verwenden Sie `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh` unter macOS und Linux und `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex` unter Windows.
+Die Terminal-Ausgabe (CLI) wird seit 0.2.1 nicht mehr ausgeliefert. Dieselbe Engine steckt in der Desktop-App; Claude-Code-Nutzer nehmen den Skill oben.
 
 ## Der Arbeitsbereich
 
 Jede Stufe streamt in das Transkript, und jedes Artefakt landet in dem Moment im Forschungsprotokoll, in dem es existiert. Das umfasst die Matplotlib-Ausgabe, das Skript, das sie erstellt hat, die dahinterliegende Datentabelle und am Ende das kompilierte Paper.
 
-Der Arbeitsbereich ist eine lokale Web-App. Die Adressleiste in den obigen Screenshots zeigt `127.0.0.1`, weil das die gesamte Bereitstellung ist. Das Layout wird auf einem Telefon auf eine Spalte reduziert. Das Schließen des Tabs stoppt den Lauf nach einer Gnadenfrist von 30 Sekunden, sodass eine Seitenaktualisierung ihn am Leben hält.
+Der Arbeitsbereich ist eine lokale Web-App. Die Adressleiste in den obigen Screenshots zeigt `127.0.0.1`, weil das die gesamte Bereitstellung ist. Das Layout wird auf einem Telefon auf eine Spalte reduziert. Das Schließen der Seite stoppt den Lauf nicht mehr; die Forschung läuft im Hintergrund weiter, und der nächste Start zeigt alles, was entstanden ist.
 
 Die Oberfläche folgt beim ersten Start der Sprache des Browsers und kann über die Symbolleiste umgeschaltet werden, auf Englisch, vereinfachtem und traditionellem Chinesisch, Französisch, Spanisch, Japanisch, Koreanisch, Portugiesisch, Deutsch und Russisch.
 
@@ -174,18 +173,18 @@ Hinweise zu den beiden Skill-Editionen, den generierten Dateien und dem plattfor
 
 ## Status
 
-Frühe Software, Version `0.1.2`. Schnittstellen sind noch in Bewegung und Releases können sie verändern.
+Frühe Software, Version `0.2.1`. Schnittstellen sind noch in Bewegung und Releases können sie verändern.
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
 Auf macOS ist die Desktop-App durch Installation, Start, Menüleiste, Beenden, Neustart, Einzelinstanz, Loopback-Bindung und Signatur auf 15.7.7 / M3 verifiziert, und ein End-to-End-Papierlauf auf macOS ist als Nächstes auf der Liste. Die Windows-Builds stammen aus der CI und kompilieren, und die benötigten Codepfade sind für sie geschrieben. Was noch fehlt, ist ein Bericht von einer echten Windows-Maschine. Intel-Macs bauen aus dem Quellcode, siehe [Build aus dem Quellcode](#build-from-source).
 
-Release-Assets sind in einer einzigen `SHA256SUMS` aufgeführt, die `install.sh` und `install.ps1` vor der Installation prüfen.
+Die Release-Assets stehen in einer einzigen `SHA256SUMS`; die Update-Prüfung der Desktop-App verifiziert Downloads dagegen.
 
 ## Beispiel-Paper
 

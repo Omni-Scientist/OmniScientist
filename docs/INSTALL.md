@@ -47,41 +47,9 @@ paper"*. The skill is selected by its description, or invoke it as `/omnisci`.
 
 ## cli
 
-One executable. The skill travels inside it and is written out to the application
-data directory the first time it runs, so there is nothing to unpack and no layout to
-keep intact.
-
-### macOS and Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh
-```
-
-It puts `omnisci` in `~/.local/bin`. `BIN_DIR=/usr/local/bin` to put it elsewhere,
-`VERSION=v0.1.0` to pin a release.
-
-On Apple Silicon the installer ad-hoc signs the binary, because the kernel refuses to
-execute an unsigned one. That is unrelated to Gatekeeper: a file fetched with `curl`
-never carries the quarantine attribute, so Gatekeeper is never consulted.
-
-### Windows
-
-```powershell
-irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex
-```
-
-**The Windows build is produced by CI and has not been run by anyone on Windows.**
-It compiles, and the code paths it needs (data directory, browser launch, path
-handling) are written for it, but "written for it" is not "tested". If you try it,
-what would help most is: does `omnisci --help` run, does the skill land under
-`%LOCALAPPDATA%\OmniScientist`, and does a paper run finish. Say so either way.
-
-### Without the installer
-
-Download `omnisci-CLI-macOS.tar.gz`, `omnisci-CLI-Linux-x64.tar.gz`,
-`omnisci-CLI-Linux-ARM64.tar.gz` or `omnisci-CLI-Windows-x64.zip` from
-[Releases](https://github.com/Omni-Scientist/OmniScientist/releases), unpack it,
-`chmod +x` the `omnisci` inside, and put it on your `PATH`. That is the whole install.
+**Discontinued.** The standalone terminal agent stopped shipping with 0.2.1. Its
+engine lives on inside the desktop app, and Claude Code users take the skill above.
+The old one-line installers now print exactly that instead of downloading anything.
 
 ### Credentials
 
@@ -179,7 +147,7 @@ remote attacker. Treat that startup line the way you would treat a password.
 A lock file at `~/.omnisci/desktop.lock` keeps a second launch from starting a second
 service. Logs are under `~/.omnisci/logs/`.
 
-Credentials are the same `~/.omnisci/env` as the CLI. Without them it still starts and
+Credentials are the same `~/.omnisci/env` described above. Without them it still starts and
 the interface offers to set them.
 
 ---
@@ -266,10 +234,7 @@ bun run build:desktop                  # -> dist-desktop/omnisci-desktop
 ```
 
 Cross-compiling the desktop launcher with `--target` works, it has no native
-dependencies. Cross-compiling the **CLI** does not: it pulls in a native module for
-formula rendering, and a cross-built binary embeds the wrong architecture's copy.
-That failure is lazy, appearing only when a formula is first rendered, which is why
-CI builds every CLI artifact on its own platform.
+dependencies.
 
 ---
 

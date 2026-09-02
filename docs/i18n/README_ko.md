@@ -79,16 +79,15 @@ Read https://omni-scientist.github.io/setup/install.md and install the OmniScien
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | **Desktop app** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-macOS.zip) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Linux-x64.deb) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/OmniSci-Desktop-Windows-x64-setup.exe) |
-| **Terminal agent** | [Apple silicon](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-macOS.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-x64.tar.gz) · [ARM64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Linux-ARM64.tar.gz) | [x64](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-CLI-Windows-x64.zip) |
 | **Claude Code skill** | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) | [omnisci-skill.zip](https://github.com/Omni-Scientist/OmniScientist/releases/latest/download/omnisci-skill.zip) |
 
-터미널 에이전트도 한 줄로 설치할 수 있습니다. macOS와 Linux에서는 `curl -fsSL https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.sh | sh`을(를), Windows에서는 `irm https://raw.githubusercontent.com/Omni-Scientist/OmniScientist/main/install.ps1 | iex`을(를) 사용하세요.
+터미널 버전(CLI)은 0.2.1부터 배포가 중단되었습니다. 같은 엔진이 데스크톱 앱에 내장되어 있으며, Claude Code 사용자는 위의 skill을 사용하세요.
 
 ## 작업 공간
 
 각 단계는 트랜스크립트로 스트리밍되며, 모든 산출물은 생성되는 즉시 연구 로그에 기록됩니다. 여기에는 matplotlib 출력, 이를 그린 스크립트, 그 뒤에 있는 데이터 테이블, 그리고 마지막으로 컴파일된 논문이 포함됩니다.
 
-작업 공간은 로컬 웹 앱입니다. 위 스크린샷의 주소 표시줄에 `127.0.0.1`이 표시되는 이유는 그것이 전체 배포이기 때문입니다. 레이아웃은 휴대폰에서 한 열로 축소됩니다. 탭을 닫으면 30초의 유예 기간 후 실행이 중지되므로, 페이지를 새로고침하면 실행이 계속 유지됩니다.
+작업 공간은 로컬 웹 앱입니다. 위 스크린샷의 주소 표시줄에 `127.0.0.1`이 표시되는 이유는 그것이 전체 배포이기 때문입니다. 레이아웃은 휴대폰에서 한 열로 축소됩니다. 탭을 닫아도 실행은 멈추지 않습니다. 연구는 백그라운드에서 계속되며, 다음에 열면 결과가 모두 표시됩니다.
 
 인터페이스는 첫 실행 시 브라우저의 언어를 따르며, 툴바에서 전환할 수 있습니다. 지원 언어는 영어, 중국어 간체 및 번체, 프랑스어, 스페인어, 일본어, 한국어, 포르투갈어, 독일어, 러시아어입니다.
 
@@ -174,18 +173,18 @@ OmniScientist/
 
 ## 상태
 
-초기 소프트웨어, 버전 `0.1.2`. 인터페이스는 아직 유동적이며 릴리스에서 변경될 수 있습니다.
+초기 소프트웨어, 버전 `0.2.1`. 인터페이스는 아직 유동적이며 릴리스에서 변경될 수 있습니다.
 
-| Platform | Terminal agent | Desktop |
-|---|---|---|
-| macOS arm64 | released | released |
-| Linux x86_64 | released | released |
-| Linux arm64 | released | released |
-| Windows x64 | released | released |
+| Platform | Desktop |
+|---|---|
+| macOS arm64 | released |
+| Linux x86_64 | released |
+| Linux arm64 | released |
+| Windows x64 | released |
 
 macOS에서는 데스크톱 앱이 15.7.7 / M3에서 설치, 실행, 메뉴 막대, 종료, 재실행, 단일 인스턴스, 루프백 바인딩 및 서명을 통해 검증되었으며, macOS에서의 엔드투엔드 논문 실행이 그 목록의 다음 항목입니다. Windows 빌드는 CI에서 생성되고 컴파일되며, 필요한 코드 경로가 작성되었습니다. 여전히 부족한 것은 실제 Windows 머신에서의 보고서입니다. Intel Mac은 소스에서 빌드됩니다. [소스에서 빌드](#build-from-source)를 참조하세요.
 
-릴리스 자산은 단일 `SHA256SUMS`에 나열되며, `install.sh`와 `install.ps1`이 설치 전에 이를 확인합니다.
+릴리스 자산은 하나의 `SHA256SUMS`에 나열되며, 데스크톱 앱의 업데이트 검사가 다운로드 전에 이를 검증합니다.
 
 ## 샘플 논문
 
