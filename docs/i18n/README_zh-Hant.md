@@ -36,6 +36,7 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## 新聞
 
+- **2026-09-02** · **Awesome AI Scientist。** 我們發布了一個面向 AI scientist 的合集 [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist)，收錄論文、系統、工作台、評測與資料集。
 - **2026-08-24** · **多語言支援。** 工作區介面與本頁皆提供多種語言版本，列於本頁頂端，並可從應用程式中的工具列切換。 *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
 - **2026-08-23** · **DeepSeek 多模態支援。** `deepseek-v4-flash-vision-exp` 加入感知 sidecar，因此一個 DeepSeek 金鑰現在即可涵蓋推理與視覺。 *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
 - **2026-08-18** · **首次修補版本。** 發行資產帶有單一 `SHA256SUMS`，安裝程式會於安裝前加以驗證。 *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*

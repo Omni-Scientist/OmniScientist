@@ -36,6 +36,7 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## 动态
 
+- **2026-09-02** · **Awesome AI Scientist。** 我们发布了一个面向 AI scientist 的合集 [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist)，收录论文、系统、工作台、评测和数据集。
 - **2026-08-24** · **多语言支持。** 工作台界面和本页面都有多种语言，页面顶部可切换，软件里在工具栏切换。*([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
 - **2026-08-23** · **接入 DeepSeek 多模态。** `deepseek-v4-flash-vision-exp` 加入感知侧车，一个 DeepSeek key 同时管推理和看图。*([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
 - **2026-08-18** · **首个补丁版本。** release 产物统一到一个 `SHA256SUMS`，安装脚本装之前会核对。*([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*

@@ -36,6 +36,7 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## News
 
+- **2026-09-02** · **Awesome AI Scientist.** We released a collection for AI scientists at [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist), covering papers, systems, workbenches, benchmarks and datasets.
 - **2026-08-24** · **Multi-language support.** The workspace interface and this page are both available in multiple languages, listed at the top of this page and switched from the toolbar in the app. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
 - **2026-08-23** · **DeepSeek multimodal support.** `deepseek-v4-flash-vision-exp` joins the perception sidecar, so one DeepSeek key now covers both reasoning and vision. *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
 - **2026-08-18** · **First patch release.** Release assets carry a single `SHA256SUMS`, and the installers verify it before installing. *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
