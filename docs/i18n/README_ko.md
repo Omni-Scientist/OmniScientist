@@ -36,12 +36,13 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## 소식
 
-- **2026-09-02** · **Awesome AI Scientist.** AI scientist를 위한 컬렉션 [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist)을 공개했습니다. 논문, 시스템, 워크벤치, 벤치마크, 데이터셋을 담았습니다.
-- **2026-08-24** · **다국어 지원.** 작업 영역 인터페이스와 이 페이지 모두 여러 언어로 제공됩니다. 언어는 이 페이지 상단에 나열되어 있으며, 앱의 도구 모음에서 전환할 수 있습니다. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
-- **2026-08-23** · **DeepSeek 멀티모달 지원.** `deepseek-v4-flash-vision-exp`가 지각 사이드카에 합류하여, 이제 DeepSeek 키 하나로 추론과 비전을 모두 처리할 수 있습니다. *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
-- **2026-08-18** · **첫 패치 릴리스.** 릴리스 자산에 `SHA256SUMS` 하나가 포함되며, 설치 프로그램은 설치 전에 이를 검증합니다. *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
-- **2026-08-16** · **첫 공개 릴리스.** 데스크톱 앱, 터미널 에이전트, Claude Code 스킬을 하나의 코드베이스에서 제공합니다. *([v0.1.0](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.0))*
-- **2026-08-13** · **기술 보고서.** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558), 12개 모달리티에 걸친 실행 결과를 포함합니다.
+- 🚀 **2026-09-02** · **v0.2.1 출시.** 완전히 새로워진 데스크톱 앱을 만나보세요. *([v0.2.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.1))*
+- 📚 **2026-09-02** · **Awesome AI Scientist.** AI scientist를 위한 컬렉션 [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist)을 공개했습니다. 논문, 시스템, 워크벤치, 벤치마크, 데이터셋을 담았습니다.
+- 🌍 **2026-08-24** · **다국어 지원.** 작업 영역 인터페이스와 이 페이지 모두 여러 언어로 제공됩니다. 언어는 이 페이지 상단에 나열되어 있으며, 앱의 도구 모음에서 전환할 수 있습니다. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
+- 👁️ **2026-08-23** · **DeepSeek 멀티모달 지원.** `deepseek-v4-flash-vision-exp`가 지각 사이드카에 합류하여, 이제 DeepSeek 키 하나로 추론과 비전을 모두 처리할 수 있습니다. *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
+- 🔐 **2026-08-18** · **첫 패치 릴리스.** 릴리스 자산에 `SHA256SUMS` 하나가 포함되며, 설치 프로그램은 설치 전에 이를 검증합니다. *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
+- 🎉 **2026-08-16** · **첫 공개 릴리스.** 데스크톱 앱, 터미널 에이전트, Claude Code 스킬을 하나의 코드베이스에서 제공합니다. *([v0.1.0](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.0))*
+- 📄 **2026-08-13** · **기술 보고서.** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558), 12개 모달리티에 걸친 실행 결과를 포함합니다.
 
 ---
 

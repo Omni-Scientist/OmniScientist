@@ -36,12 +36,13 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## News
 
-- **2026-09-02** · **Awesome AI Scientist。** AI scientist 向けのコレクション [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist) を公開しました。論文、システム、ワークベンチ、ベンチマーク、データセットを収録しています。
-- **2026-08-24** · **多言語対応。** ワークスペースのインターフェースとこのページはともに多言語で利用でき、このページの上部に一覧表示され、アプリのツールバーから切り替えられます。 *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
-- **2026-08-23** · **DeepSeekマルチモーダル対応。** `deepseek-v4-flash-vision-exp`が知覚サイドカーに加わり、DeepSeekキー1つで推論と視覚の両方をカバーできるようになりました。 *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
-- **2026-08-18** · **初のパッチリリース。** リリースアセットには単一の`SHA256SUMS`が同梱され、インストーラはインストール前にそれを検証します。 *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
-- **2026-08-16** · **初の公開リリース。** 単一のコードベースに基づくデスクトップアプリ、ターミナルエージェント、Claude Codeスキル。 *([v0.1.0](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.0))*
-- **2026-08-13** · **技術報告。** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558)、12のモダリティにわたる実行結果を収録。
+- 🚀 **2026-09-02** · **v0.2.1 リリース。** 一新されたデスクトップ版をどうぞ。 *([v0.2.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.1))*
+- 📚 **2026-09-02** · **Awesome AI Scientist。** AI scientist 向けのコレクション [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist) を公開しました。論文、システム、ワークベンチ、ベンチマーク、データセットを収録しています。
+- 🌍 **2026-08-24** · **多言語対応。** ワークスペースのインターフェースとこのページはともに多言語で利用でき、このページの上部に一覧表示され、アプリのツールバーから切り替えられます。 *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
+- 👁️ **2026-08-23** · **DeepSeekマルチモーダル対応。** `deepseek-v4-flash-vision-exp`が知覚サイドカーに加わり、DeepSeekキー1つで推論と視覚の両方をカバーできるようになりました。 *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
+- 🔐 **2026-08-18** · **初のパッチリリース。** リリースアセットには単一の`SHA256SUMS`が同梱され、インストーラはインストール前にそれを検証します。 *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
+- 🎉 **2026-08-16** · **初の公開リリース。** 単一のコードベースに基づくデスクトップアプリ、ターミナルエージェント、Claude Codeスキル。 *([v0.1.0](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.0))*
+- 📄 **2026-08-13** · **技術報告。** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558)、12のモダリティにわたる実行結果を収録。
 
 ---
 

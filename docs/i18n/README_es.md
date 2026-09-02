@@ -36,12 +36,13 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## Noticias
 
-- **2026-09-02** · **Awesome AI Scientist.** Publicamos una colección para AI scientists en [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist), con artículos, sistemas, entornos de trabajo, benchmarks y conjuntos de datos.
-- **2026-08-24** · **Compatibilidad multiidioma.** La interfaz del espacio de trabajo y esta página están disponibles en varios idiomas, que se listan arriba y se cambian desde la barra de herramientas de la aplicación. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
-- **2026-08-23** · **Soporte multimodal de DeepSeek.** `deepseek-v4-flash-vision-exp` se une al sidecar de percepción, así una única clave de DeepSeek cubre ahora tanto el razonamiento como la visión. *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
-- **2026-08-18** · **Primer parche.** Los recursos de publicación incluyen un único `SHA256SUMS`, y los instaladores lo verifican antes de instalar. *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
-- **2026-08-16** · **Primera publicación pública.** Aplicación de escritorio, agente de terminal y una habilidad de Claude Code, desde un mismo código base. *([v0.1.0](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.0))*
-- **2026-08-13** · **Informe técnico.** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558), con ejecuciones en doce modalidades.
+- 🚀 **2026-09-02** · **v0.2.1 publicada.** Una aplicación de escritorio totalmente nueva. ¡Bienvenidos! *([v0.2.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.1))*
+- 📚 **2026-09-02** · **Awesome AI Scientist.** Publicamos una colección para AI scientists en [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist), con artículos, sistemas, entornos de trabajo, benchmarks y conjuntos de datos.
+- 🌍 **2026-08-24** · **Compatibilidad multiidioma.** La interfaz del espacio de trabajo y esta página están disponibles en varios idiomas, que se listan arriba y se cambian desde la barra de herramientas de la aplicación. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
+- 👁️ **2026-08-23** · **Soporte multimodal de DeepSeek.** `deepseek-v4-flash-vision-exp` se une al sidecar de percepción, así una única clave de DeepSeek cubre ahora tanto el razonamiento como la visión. *([v0.1.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.2))*
+- 🔐 **2026-08-18** · **Primer parche.** Los recursos de publicación incluyen un único `SHA256SUMS`, y los instaladores lo verifican antes de instalar. *([v0.1.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.1))*
+- 🎉 **2026-08-16** · **Primera publicación pública.** Aplicación de escritorio, agente de terminal y una habilidad de Claude Code, desde un mismo código base. *([v0.1.0](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.0))*
+- 📄 **2026-08-13** · **Informe técnico.** [arXiv:2608.13558](https://arxiv.org/abs/2608.13558), con ejecuciones en doce modalidades.
 
 ---
 
