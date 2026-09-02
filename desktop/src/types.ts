@@ -121,7 +121,9 @@ export type TransportEvent =
   | { type: "artifact.created"; messageId: string; artifact: Artifact }
   | { type: "artifacts.updated"; messageId: string; artifacts: Artifact[] }
   | { type: "run.failed"; messageId: string; error: string }
-  | { type: "assistant.completed"; message: ChatMessage };
+  | { type: "assistant.completed"; message: ChatMessage }
+  // 心跳：长工具静默时防连接被闲置超时，前端直接忽略
+  | { type: "ping" };
 
 export interface ResearchTransport {
   listSessions(): Promise<SessionSummary[]>;

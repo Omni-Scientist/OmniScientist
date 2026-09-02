@@ -964,7 +964,7 @@ export const apiFetch = async (request: Request): Promise<Response> => {
           // 长工具（尤其编译）几分钟不吐事件，Bun.serve 的 idleTimeout 顶格
           // 也就 255 秒，静默一过连接就被闲死，界面看起来像"跑着跑着停了"。
           // 每 20 秒打一拍心跳，前端对未知事件类型天然忽略。
-          heartbeat = setInterval(() => emit({ type: "ping" } as TransportEvent), 20_000);
+          heartbeat = setInterval(() => emit({ type: "ping" }), 20_000);
           void runMessage(runtime, content, emit)
             .catch((error) => {
               const detail = errorMessage(error);
