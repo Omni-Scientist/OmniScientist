@@ -896,7 +896,10 @@ export const apiFetch = async (request: Request): Promise<Response> => {
         if (!file) return json({ error: "没有这个会话产物" }, 404);
         return new Response(Bun.file(file.absolutePath), {
           headers: {
-            "Cache-Control": "private, max-age=31536000, immutable",
+            // 工作区里的文件是活的：论文会被反复重编译，路径不变内容变。immutable 会把
+            // 旧 PDF 钉死在预览里（模型明明重编了，用户看到的数字还是老的，2026-09-02 实锤）。
+            // 本机回源没有网络成本，直接 no-cache 每次取最新。
+            "Cache-Control": "no-cache",
             "Content-Type": file.contentType,
             "Content-Disposition": `inline; filename="${file.filename.replaceAll('"', "")}"`,
             "X-Content-Type-Options": "nosniff",
