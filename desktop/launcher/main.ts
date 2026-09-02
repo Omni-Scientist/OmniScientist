@@ -24,7 +24,7 @@ import {
   autoDecision, missingNames, planFor, planIsEmpty, type Check, type InstallPlan,
 } from "./deps-plan.ts";
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const HOST = "127.0.0.1";
 const TECTONIC_VERSION = "0.17.0";
 
