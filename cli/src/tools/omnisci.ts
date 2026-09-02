@@ -257,15 +257,19 @@ interface PaperManifest {
  */
 function lintNote(lint: PaperManifest["lint"]): string {
   if (!lint) return "";
-  if (lint.error) return `\n\n验收检查没跑成（不影响 PDF）：${lint.error}`;
+  if (lint.error) return `\n\nAcceptance lint could not run (PDF unaffected): ${lint.error}`;
   const checks = lint.checks ?? {};
   const total = Object.keys(checks).length;
   const red = lint.red ?? [];
-  if (!red.length) return `\n\n验收检查：${total} 项全绿。`;
+  if (!red.length) return `\n\nAcceptance lint: all ${total} checks green.`;
   const lines = red.map((k) => `- ${k}: ${checks[k]?.detail ?? ""}`.trimEnd());
-  return `\n\n验收检查：${total} 项里 ${red.length} 项红（PDF 已生成，这些是标签不是闸）：\n${lines.join("\n")}\n`
-    + `按条修完再 omnisci_compile 一次。refs_count 红就回到 lit_cli.py 多搜几个子话题、合并 picks 重跑 omnisci_bib；`
-    + `number_density 红就把成组的数字做成表、正文只留主效应；overfull 红多半是过长的行内公式或不可断的长串。`;
+  return `\n\nAcceptance lint: ${red.length} of ${total} checks RED. The PDF exists, but the paper is NOT `
+    + `delivery-ready while this list stands. Fix each item and run omnisci_compile again until the list is `
+    + `empty; if a red truly must stay, say why in one sentence in your final summary.\n${lines.join("\n")}\n`
+    + `Hints: refs_count -> search more subtopics with lit_cli.py, merge picks, rerun omnisci_bib. `
+    + `number_density -> move grouped numbers into a table and keep at most 3 result numbers per paragraph `
+    + `of prose. fig_aspect -> figures print wide and short. overfull -> break long inline math or `
+    + `unbreakable strings.`;
 }
 
 async function compile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {

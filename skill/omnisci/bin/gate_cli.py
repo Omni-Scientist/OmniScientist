@@ -305,6 +305,18 @@ def check(td, tex_path):
         if os.path.exists(p) and any(json.loads(l).get("truncated") for l in open(p)):
             out["note"] = ("a recorded run was clipped for size, so a number printed in the omitted part will "
                            "read as ungrounded. Print fewer intermediate lines and record again.")
+    # Surface acceptance-lint reds here too: gate is the last thing a run checks, and a paper with
+    # standing reds (too many numbers per paragraph, thin bibliography, tower figures) is not done.
+    try:
+        red = ((json.load(open(os.path.join(hb.host_dir(td), "paper.manifest.json"))).get("lint") or {})
+               .get("red")) or []
+    except Exception:
+        red = []
+    if red:
+        out["lint_red"] = red
+        out["lint_note"] = ("acceptance lint has RED items; the paper is not delivery-ready until this list "
+                            "is empty. Fix them and recompile, or justify each survivor in one sentence in "
+                            "your final report.")
     return out
 
 
