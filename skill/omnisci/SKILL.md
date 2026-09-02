@@ -117,7 +117,15 @@ non-interactive run, put it at the top of your final report.
 
 Write a python script under `<case>/host/analysis/`, print every decisive number as `name = value`, and save
 figures under `<case>/host/figures/`. The script runs with **cwd set to the case directory**, so resolve paths
-from `__file__` if you need to be safe. Then:
+from `__file__` if you need to be safe.
+
+Figure shape contract: a single-column figure prints WIDE and SHORT, height about 0.43x its width (think
+10:4.3); a figure meant to span both columns doubles the width at the SAME height, never the height. A
+sparse chart (a handful of bars or points) gets a smaller height, not a bigger canvas, and two half-empty
+plots belong in one multi-panel row rather than two figures. Compile lint reports `fig_aspect` red on
+anything taller than these bands (col 0.58, wide 0.30 of the width).
+
+Then:
 
 ```bash
 python3 -u $OMNISCI/gate_cli.py record --task <case> --script host/analysis/<name>.py

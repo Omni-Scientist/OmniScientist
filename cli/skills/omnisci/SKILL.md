@@ -146,6 +146,12 @@ Call `view_image` on every analysis figure afterwards to confirm it is not blank
 misleading. Report a null result as a null result; a paper that honestly resolves nothing is acceptable, a
 paper that dresses a null as a discovery is not.
 
+Figure shape contract: a single-column figure prints WIDE and SHORT, height about 0.43x its width (think
+10:4.3); a figure meant to span both columns doubles the width at the SAME height, never the height. A
+sparse chart (a handful of bars or points) gets a smaller height, not a bigger canvas, and two half-empty
+plots belong in one multi-panel row rather than two figures. Compile lint reports `fig_aspect` red on
+anything taller than these bands (col 0.58, wide 0.30 of the width).
+
 ### 3. Get real references
 
 ```bash

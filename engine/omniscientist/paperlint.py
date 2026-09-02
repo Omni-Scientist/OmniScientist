@@ -263,7 +263,7 @@ def lint_paths(pdf_path, tex_path, bib_path=None, compile_log=None, fig_pdfs=Non
     # ---- per-figure source checks: banned colours, in-figure text size, serif fonts, width class
     fig_pdfs = sorted(fig_pdfs or [])
     col_pt, wide_pt = cfg["col_in"] * 72.0, cfg["wide_in"] * 72.0
-    banned_hits, size_bad, font_bad = [], [], []
+    banned_hits, size_bad, font_bad, aspect_bad = [], [], [], []
     fig_unreadable = []
     for fp in fig_pdfs:
         try:
@@ -273,6 +273,19 @@ def lint_paths(pdf_path, tex_path, bib_path=None, compile_log=None, fig_pdfs=Non
             fig_unreadable.append("%s (%s)" % (os.path.basename(fp), type(e).__name__))
             continue
         w = pg.rect.width
+        # ---- shape: figures print wide and short (house shape 10:4.3). A single-column figure taller
+        #      than 0.58x its width, or a full-width one taller than 0.30x, hogs the page for sparse ink.
+        h = pg.rect.height
+        if w:
+            # A raster (png/jpg) carries pixels, not printed points, so its width says nothing about
+            # whether it lands in one column or two; judge those against the lenient single-column band.
+            if fd.is_pdf:
+                is_wide = abs(w - wide_pt) < abs(w - col_pt)
+                cls, limit = ("wide", 0.30) if is_wide else ("col", 0.58)
+            else:
+                cls, limit = "raster, col band assumed", 0.58
+            if h / w > limit:
+                aspect_bad.append("%s: h/w=%.2f (%s limit %.2f)" % (os.path.basename(fp), h / w, cls, limit))
         target = col_pt if abs(w - col_pt) < abs(w - wide_pt) else wide_pt
         scale = target / w if w else 1.0
         for d in pg.get_drawings():
@@ -301,6 +314,8 @@ def lint_paths(pdf_path, tex_path, bib_path=None, compile_log=None, fig_pdfs=Non
                          if fig_unreadable else "%d figure PDF(s) open cleanly" % len(fig_pdfs)}
     R["fig_text_size"] = {"ok": not size_bad, "detail": "; ".join(size_bad[:4]) or "in-figure text within [body-2, body] pt"}
     R["fig_fonts"] = {"ok": not font_bad, "detail": "; ".join(font_bad[:4]) or "all figure text serif (Times family)"}
+    R["fig_aspect"] = {"ok": not aspect_bad, "detail": "; ".join(aspect_bad[:4])
+                       or "all figures wide and short (col<=0.58, wide<=0.30 of width)"}
 
     # ---- prose: DESCRIPTIVE result-number density in Results/Discussion/Conclusion paragraphs.
     #      <=3 per paragraph, no exemption. The old rule let ONE paragraph carry up to 10, which is

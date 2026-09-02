@@ -465,7 +465,7 @@ def _acceptance_lint(out_pdf, out_tex, work, figdir, sections):
     try:
         pl = hb.engine_module("paperlint")
         figs = sorted(os.path.join(figdir, f) for f in os.listdir(figdir)
-                      if f.lower().endswith(".pdf")) if os.path.isdir(figdir) else []
+                      if f.lower().endswith((".pdf", ".png", ".jpg", ".jpeg"))) if os.path.isdir(figdir) else []
         R = pl.lint_paths(out_pdf, out_tex,
                           bib_path=os.path.join(work, "references.bib"),
                           compile_log=os.path.join(work, "compile.log"),
