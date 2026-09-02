@@ -122,6 +122,172 @@ _EXEMPLAR_CAP = {
 }
 
 
+def _head_table(p, n=400):
+    """First n rows of a csv/tsv/parquet WITHOUT reading the whole file (a 2.6 GB parquet must not be loaded here)."""
+    import pandas as pd
+    low = p.lower()
+    if low.endswith(".parquet"):
+        import pyarrow.parquet as pq
+        return next(pq.ParquetFile(p).iter_batches(batch_size=n)).to_pandas()
+    return pd.read_csv(p, sep="\t" if low.endswith(".tsv") else ",", nrows=n)
+
+
+def _sequence_exemplar(td, membs, out_path, n=6, L=120):
+    """Data exemplar for SEQUENCE data: n sequences spanning the labels, the first L residues of each drawn as
+    coloured tiles (one light colour per base/residue, one row per sequence, label on the left). Sequences live in a
+    table column (>= 90% of values look like a nucleotide or protein string) or a FASTA file. Returns
+    (out_path, caption, 'sequence') or None. A DNA benchmark's table exemplar would otherwise show a 500-character
+    string cell, which is not a picture of the data."""
+    import os
+    import re
+    seqs = []                                                # (label, sequence)
+    for m in membs:
+        p = os.path.join(td, str(m.get("file", "")))
+        if not os.path.exists(p):
+            continue
+        low = p.lower()
+        if low.endswith((".fa", ".fasta", ".fna", ".faa")):
+            lab, cur = "", []
+            for line in open(p, errors="ignore"):
+                if line.startswith(">"):
+                    if cur:
+                        seqs.append((lab, "".join(cur)))
+                    lab, cur = line[1:].strip()[:24], []
+                    if len(seqs) >= 400:
+                        break
+                else:
+                    cur.append(line.strip())
+            if cur and len(seqs) < 400:
+                seqs.append((lab, "".join(cur)))
+        elif low.endswith((".csv", ".tsv", ".parquet")):
+            try:
+                df = _head_table(p)
+            except Exception:
+                continue
+            import pandas as pd
+            pat = r"^(?:[ACGTUNacgtun]{20,}|[ACDEFGHIKLMNPQRSTVWYX]{20,})$"
+            # pandas 3 gives text columns the 'str' dtype, not object: test string-ness, not the object dtype
+            col = next((c for c in df.columns if pd.api.types.is_string_dtype(df[c])
+                        and df[c].astype(str).str.match(pat).mean() >= 0.9), None)
+            if col is None:
+                continue
+            labcol = next((c for c in df.columns if str(c).lower() in ("label", "y", "class", "target", "category")), None)
+            for _, r in df.iterrows():
+                seqs.append((str(r[labcol]) if labcol is not None else "", str(r[col])))
+        if seqs:
+            break
+    if not seqs:
+        return None
+    labels = sorted(set(l for l, _ in seqs))
+    per = max(1, n // max(1, len(labels)))                   # spread the rows over the labels
+    picks, used = [], {}
+    for lab, s in seqs:                                      # first pass: up to `per` per label
+        if used.get(lab, 0) < per:
+            picks.append((lab, s)); used[lab] = used.get(lab, 0) + 1
+        if len(picks) >= n:
+            break
+    for lab, s in seqs:                                      # top up
+        if len(picks) >= n:
+            break
+        if (lab, s) not in picks:
+            picks.append((lab, s))
+    picks.sort(key=lambda x: labels.index(x[0]))
+    L = min(L, min(len(s) for _, s in picks))
+    if L < 20:
+        return None
+    alphabet = sorted(set("".join(s[:L] for _, s in picks).upper()))
+    nuc = all(ch in "ACGTUN" for ch in alphabet)
+    order = [c for c in "ACGTUN" if c in alphabet] if nuc else alphabet
+    idx = {c: i for i, c in enumerate(order)}
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+    from matplotlib.patches import Patch
+    M = np.array([[idx.get(ch.upper(), len(order)) for ch in s[:L]] for _, s in picks])
+    base = ["#E64B35", "#4DBBD5", "#00A087", "#3C5488", "#F39B7F", "#8491B4", "#91D1C2",
+            "#DC0000", "#7E6148", "#B09C85", "#4D4D4D", "#F0A202", "#6A3D9A", "#B15928",
+            "#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02"]
+
+    def _light(h, f=0.45):                                   # large fills are light (paper rule)
+        r, g, b = int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)
+        return "#%02X%02X%02X" % tuple(int(v + (255 - v) * f) for v in (r, g, b))
+    cols = [_light(base[i % len(base)]) for i in range(len(order))] + ["#E5E5E5"]
+    try:
+        fig, ax = plt.subplots(figsize=(6.4, 0.34 * len(picks) + 1.1), layout="constrained")
+    except TypeError:                                        # older matplotlib without the layout keyword
+        fig, ax = plt.subplots(figsize=(6.4, 0.34 * len(picks) + 1.1))
+    ax.imshow(M, aspect="auto", cmap=ListedColormap(cols), vmin=-0.5, vmax=len(cols) - 0.5, interpolation="nearest")
+    ax.set_yticks(range(len(picks)))
+    ax.set_yticklabels([("label %s" % lab) if lab != "" else ("sequence %d" % (i + 1)) for i, (lab, _) in enumerate(picks)],
+                       fontsize=8, family="serif")
+    ax.set_xlabel("position (%s)" % ("bp" if nuc else "residue"), fontsize=8, family="serif")
+    ax.tick_params(axis="x", labelsize=8)
+    for t in ax.get_xticklabels():
+        t.set_family("serif")
+    for sp in ax.spines.values():
+        sp.set_linewidth(0.5)
+    handles = [Patch(facecolor=cols[i], edgecolor="#555555", linewidth=0.4, label=c) for i, c in enumerate(order)]
+    lg = dict(ncol=min(len(order), 10), frameon=False, prop={"family": "serif", "size": 8}, handlelength=1.2, columnspacing=1.2)
+    try:                                                     # constrained layout reserves the strip below the axes
+        fig.legend(handles=handles, loc="outside lower center", **lg)
+    except Exception:
+        ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.28), **lg)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    cap = ("Representative %s sequences, first %d %s of each drawn as coloured tiles (one colour per %s), spanning the labels"
+           % ("nucleotide" if nuc else "protein", L, "bases" if nuc else "residues", "base" if nuc else "residue"))
+    return out_path, cap, "sequence"
+
+
+def _table_exemplar(td, membs, out_path, n_tables=2, n_rows=5):
+    """Data exemplar for a TABULAR task: render the first rows of up to n_tables real member tables as one
+    figure (matplotlib table, serif), so a table-based paper still SHOWS its raw input. Returns
+    (out_path, caption, 'table') or None."""
+    import os
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    try:
+        import pandas as pd
+    except Exception:
+        return None
+    paths = []
+    for m in membs:
+        p = os.path.join(td, str(m.get("file", "")))
+        if p.lower().endswith((".csv", ".tsv", ".parquet")) and os.path.exists(p):
+            paths.append((m, p))
+        if len(paths) >= n_tables:
+            break
+    if not paths:
+        return None
+    fig, axes = plt.subplots(1, len(paths), figsize=(3.4 * len(paths), 1.7))
+    axes = axes if len(paths) > 1 else [axes]
+    for ax, (m, p) in zip(axes, paths):
+        try:
+            df = (pd.read_parquet(p) if p.endswith(".parquet")
+                  else pd.read_csv(p, sep="\t" if p.endswith(".tsv") else ",", nrows=n_rows))
+        except Exception:
+            plt.close(fig)
+            return None
+        df = df.iloc[:n_rows, :6].round(4)
+        ax.axis("off")
+        tb = ax.table(cellText=df.astype(str).values, colLabels=list(df.columns), loc="center", cellLoc="center")
+        tb.auto_set_font_size(False)
+        tb.set_fontsize(7)
+        tb.scale(1.0, 1.15)
+        for cell in tb.get_celld().values():
+            cell.set_edgecolor("#B0B8BD")
+            cell.set_linewidth(0.5)
+        ax.set_title(os.path.basename(p), fontsize=8, family="serif")
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    cap = ("Representative rows of the raw data tables analysed here (first %d rows shown; %d tables in total)."
+           % (n_rows, len(membs)))
+    return out_path, cap, "table"
+
+
 def exemplar_figure(td, members, out_path, n=4):
     """Render up to n representative RAW members (spanning labels) into ONE composite figure that SHOWS the actual
     perception modality -- X-ray/micrograph (image), spectrogram (audio), waveform (signal), point cloud (3D). Returns
@@ -133,6 +299,13 @@ def exemplar_figure(td, members, out_path, n=4):
         return None
     mod = next((m for m in ("image", "threeD", "audio", "signal", "video") if m in detect_modalities(membs)), None)
     if not mod:
+        if "table" in detect_modalities(membs):            # tabular task: the raw data IS a table -> show real rows
+            try:
+                seq = _sequence_exemplar(td, membs, out_path)   # ... unless the table is a column of sequences
+            except Exception as e:
+                print("  [exemplar] sequence renderer failed (%s: %s) -> table exemplar" % (type(e).__name__, e))
+                seq = None
+            return seq or _table_exemplar(td, membs, out_path)
         return None
     def _lab(m):
         return str(m.get("label", m.get("class", m.get("y", "")))).strip()
@@ -274,7 +447,14 @@ def _p_table(args, td, by_file, state, log):
     if not p:
         return "table NOT FOUND"
     try:
-        df = pd.read_parquet(p) if p.endswith(".parquet") else pd.read_csv(p, sep=None, engine="python")
+        if p.endswith(".parquet"):
+            try:                                           # bounded read: a whole-table read_parquet OOMs on big
+                import pyarrow.parquet as pq               # files (audit item 5); the overview needs a sample only
+                df = next(pq.ParquetFile(p).iter_batches(batch_size=100000)).to_pandas()
+            except Exception:
+                df = pd.read_parquet(p)
+        else:
+            df = pd.read_csv(p, sep=None, engine="python", nrows=100000)
     except Exception as e:
         return "could not read table: %s" % e
     log("  [tool] look_at_table %s (%dx%d)" % (os.path.basename(p), df.shape[0], df.shape[1]))
@@ -383,27 +563,48 @@ def _p_video(args, td, by_file, state, log):
     try:
         import imageio.v3 as iio
         import numpy as np
-        from PIL import Image
+        from PIL import Image, ImageDraw
         n = max(int(args.get("n_frames", 3)), 1)
         os.makedirs(_RDIR, exist_ok=True)
         allf = []                                          # materialise (short scientific clips) -> robust to
         for fr in iio.imiter(p):                           # unknown/inf meta nframes, and lets us spread over TIME
-            allf.append(fr)
+            im = Image.fromarray(np.asarray(fr)).convert("RGB")
+            if max(im.size) > 320:                         # thumbnail AT INGEST: 600 full-res 4K frames were ~15GB
+                im.thumbnail((320, 320))                   # in RAM (OOM, audit item 5); the contact sheet renders at
+            allf.append(np.asarray(im))                    # <=320px anyway, so nothing visible is lost
             if len(allf) >= 600:
                 break
         if not allf:
             return "video has no readable frames: %s" % os.path.basename(p)
         idxs = sorted(set(int(i) for i in np.linspace(0, len(allf) - 1, min(n, len(allf)))))
         q = args.get("question") or "Describe what these video frames show and any change across them (temporal dynamics)."
-        out = []
-        for k in idxs:
-            if state["img_used"] >= state["img_budget"]:
-                break
-            fp = os.path.join(_RDIR, "vf_%s_%d.png" % (abs(hash(p)), k))
-            Image.fromarray(np.asarray(allf[k])).save(fp)
-            out.append("frame %d/%d: %s" % (k, len(allf), _vlm(fp, q)[:400])); state["img_used"] += 1
-        log("  [tool] look_at_video %s (%d of %d frames)" % (os.path.basename(p), len(out), len(allf)))
-        return "\n".join(out) or "no frames sampled"
+        if state["img_used"] >= state["img_budget"]:
+            return ("image budget exhausted (%d/%d used) -- no more frames can be viewed for %s; work from the "
+                    "frames already described and do not request more" %
+                    (state["img_used"], state["img_budget"], os.path.basename(p)))
+        # One contact sheet for the whole clip, not one VLM call per frame: a single
+        # frame cannot answer a question about temporal change, and charging the image
+        # budget per frame used to exhaust it on the first call.
+        cols = min(4, len(idxs))
+        rows = int(np.ceil(len(idxs) / cols))
+        tiles = [np.asarray(allf[k]) for k in idxs]
+        th, tw = tiles[0].shape[0], tiles[0].shape[1]
+        scale = min(1.0, 320.0 / max(th, tw))
+        tw2, th2 = max(1, int(tw * scale)), max(1, int(th * scale))
+        sheet = Image.new("RGB", (cols * tw2, rows * (th2 + 16)), "white")
+        drw = ImageDraw.Draw(sheet)
+        for i, (k, t) in enumerate(zip(idxs, tiles)):
+            im = Image.fromarray(t).convert("RGB").resize((tw2, th2))
+            x, y = (i % cols) * tw2, (i // cols) * (th2 + 16)
+            sheet.paste(im, (x, y + 16))
+            drw.text((x + 3, 3 + y), "t=%d/%d" % (k, len(allf) - 1), fill="black")
+        fp = os.path.join(_RDIR, "vsheet_%s.png" % abs(hash(p + str(idxs))))
+        sheet.save(fp)
+        state["img_used"] += 1
+        log("  [tool] look_at_video %s (contact sheet, %d of %d frames, used=%d/%d)"
+            % (os.path.basename(p), len(idxs), len(allf), state["img_used"], state["img_budget"]))
+        return ("contact sheet of %d frames sampled across the clip (labelled t=index/%d, read left to right, "
+                "top to bottom): %s" % (len(idxs), len(allf) - 1, _vlm(fp, q, 500)[:900]))
     except Exception as e:
         return "video perception needs imageio + a readable codec -- failed on %s: %s" % (os.path.basename(p), e)
 

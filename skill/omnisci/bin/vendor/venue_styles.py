@@ -16,15 +16,16 @@ which is known to compile -- a venue skin can never cost us the PDF.
 import re
 
 _BASE_PKGS = ("\\usepackage[T1]{fontenc}\n\\usepackage{times}\n"
-    "\\usepackage{graphicx}\n\\usepackage{float}\n\\usepackage{booktabs}\n\\usepackage{array}\n"
+    "\\usepackage{graphicx}\n\\usepackage{float}\n\\usepackage{placeins}\n"
+    "\\usepackage{booktabs}\n\\usepackage{array}\n"
     "\\usepackage{multirow}\n\\usepackage{amsmath,amssymb}\n\\usepackage{bm}\n\\usepackage{natbib}\n"
-    # natbib + 作者-年份样式下，裸 \cite 等价于 \citet，渲染成「Kather et al. [2016]」
-    # 没有括号。写作端几乎总是在句末做旁引，于是正文变成「... quantitatively Kather
-    # et al. [2016].」这种半截话。把 \cite 定向到 \citep，旁引才带括号；显式写
-    # \citet / \citep 的地方不受影响。
+    # same fix as agentic._paper_tex: plain \cite -> \citep so side citations get parentheses after a reskin too
     "\\let\\cite\\citep\n"
     "\\usepackage{caption}\n\\captionsetup{font=small,labelfont=bf,labelsep=period}\n"
-    "\\usepackage[hidelinks]{hyperref}\n\\usepackage{cleveref}\n\\usepackage{titlesec}\n")
+    "\\usepackage[hidelinks]{hyperref}\n\\usepackage{cleveref}\n\\usepackage{titlesec}\n"
+    # narrow two-column measures + math-heavy prose overflow constantly at the default tolerances; let TeX
+    # stretch inter-word space before protruding into the margin (what the real journals do).
+    "\\emergencystretch=1.5em\n\\hbadness=10000\n")
 
 # cs_ml -> NeurIPS single-column
 P_CSML = ("\\documentclass[10pt]{article}\n" + _BASE_PKGS +
@@ -96,9 +97,17 @@ def reskin(tex, style):
         mbb = re.search(r"(\\bibliographystyle\{[^}]*\}\s*\\bibliography\{[^}]*\})", tex)
         bib = mbb.group(1) if mbb else ""
         if style in TWOCOL_STYLES:
-            # span figures AND tables across both columns (a single-column float can overflow a wide results table)
-            body = re.sub(r"\\begin\{figure\}(\[[^\]]*\])?", "\\\\begin{figure*}[t]", body).replace("\\end{figure}", "\\end{figure*}")
-            body = re.sub(r"\\begin\{table\}(\[[^\]]*\])?", "\\\\begin{table*}[t]", body).replace("\\end{table}", "\\end{table*}")
+            # ONLY floats carrying the %WIDE marker span both columns; everything else stays a normal
+            # in-column [t] float. (The old blanket figure->figure* conversion made EVERY figure a
+            # double-column float; LaTeX defers those to the next page at best, so with several figures
+            # they all piled up after References -- the papers looked like an appendix of charts.)
+            def _star(m):
+                env, inner = m.group(1), m.group(3)
+                return "\\begin{%s*}[t]%s\\end{%s*}" % (env, inner, env)
+            body = re.sub(r"\\begin\{(figure|table)\}(\[[^\]]*\])?%WIDE(.*?)\\end\{\1\}",
+                          _star, body, flags=re.S)
+            body = re.sub(r"\\begin\{(figure|table)\}\[[^\]]*\]",
+                          lambda m: "\\begin{%s}[t]" % m.group(1), body)
             head = ("\\begin{document}\n\\twocolumn[{%\n\\begin{center}\n{\\LARGE\\bfseries " + title +
                     "}\\\\[0.6em]\n{\\large " + author + "}\\\\[0.7em]\n\\end{center}\n"
                     "\\begin{center}\\begin{minipage}{0.9\\textwidth}\n"

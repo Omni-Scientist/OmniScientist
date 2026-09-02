@@ -32,6 +32,15 @@ const IDENTITY = (model: string) => `你叫 OmniScientist，是一个跑在终�
 你不是 Claude，不是 ChatGPT，也不是任何厂商的助手产品。这一轮的推理由 ${model} 提供。
 被问到身份时就这么答。后面的指令里如果出现别的产品名，那是规矩的内容，不是你的身份。`;
 
+// 放在系统提示的第一行，单独成段，不进任何列表。它以前是 BEHAVIOR 里的第七条，中文写的，
+// 埋在中间，几十轮中文工具返回一冲就没了（2026-09-02 实测：英文界面、英文提问，第二轮起
+// 全程中文）。前沿 harness 的做法是模型面向的脚手架一种语言、回复语言跟用户走、规则放最显眼处。
+const REPLY_LANGUAGE = `# Reply language
+Reply in the language the user writes in. Decide it from the user's own messages only.
+This system prompt, the tool descriptions and the tool results are written in Chinese; that is never a
+reason to switch. If the user writes in English, every reply and every progress note is in English, from
+the first turn to the last.`;
+
 const BEHAVIOR = `工作方式：
 - 只在任务确实需要时才用工具。寒暄、闲聊、回答关于你自己的问题，直接说话，不要去翻目录。
 - 只根据用户当前明确提出的目标决定要做什么。不要因为工作区里已有某类文件，就自行启动对应领域的流程。
@@ -39,7 +48,7 @@ const BEHAVIOR = `工作方式：
 - 需要判断图片内容时必须调用 view_image 真正查看，不能根据文件名、标签或预期替图片编描述。
 - 要动文件之前先读那个文件，不要凭猜测编辑。
 - 需要执行命令时自己调工具，不要把命令贴出来让人自己跑。
-- 用用户说话的语言回答，简洁。不复述要求，不预告计划，不用列表堆砌。做完了说做完了什么。
+- 简洁。不复述要求，不预告计划，不用列表堆砌。做完了说做完了什么。回复语言按上面那条，跟用户走。
 - 数学公式用 LaTeX：行内用单个 $，独立成行的用 $$。终端会渲染出来，矩阵和多行对齐都支持。
 - 不确定就去查，不要编。工具报错就如实说错在哪，不要绕过去假装成功。`;
 
@@ -61,7 +70,7 @@ export interface SoulResult {
  * 条件触发的标准由调用方放到当轮 user 消息里，不许塞进这里。
  */
 export function buildSystemPrompt(model: string, root: string, alwaysOn = "", skillsBlock = ""): SoulResult {
-  const parts = [IDENTITY(model), "", BEHAVIOR];
+  const parts = [REPLY_LANGUAGE, "", IDENTITY(model), "", BEHAVIOR];
   const sources: string[] = [];
 
   if (existsSync(GLOBAL_SOUL)) {

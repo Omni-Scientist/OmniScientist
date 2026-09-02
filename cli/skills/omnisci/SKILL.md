@@ -47,6 +47,10 @@ python3 $OMNISCI/case_cli.py init --dir ~/their_folder \
     --direction "Find a concrete, testable question these fields can answer, choose the method yourself, and run real code to test it."
 ```
 
+Before initialising a new case, check whether one already exists nearby: users often point at the `data/`
+subfolder of a case whose `series.json` sits one level up (list the parent of the folder they named; the CLIs
+also search upward, adopting a parent only when its `series.json` actually lists files under that folder).
+
 `inspect` never writes; run it first and tell the user what you found. `init` writes `series.json` into their
 folder and nothing else (use `--out` to build the case elsewhere and symlink the data instead). Files are
 routed to a modality by extension, and each item's label is taken from its containing folder, so
@@ -145,9 +149,16 @@ paper that dresses a null as a discovery is not.
 ### 3. Get real references
 
 ```bash
-python3 $OMNISCI/lit_cli.py search --query "<specific terms from your subject>" --n 6      # explore
+python3 $OMNISCI/lit_cli.py search --query "<specific terms from your subject>" --n 10     # explore
 python3 $OMNISCI/lit_cli.py search --doi 10.1038/s41597-022-01721-8                        # pin one you decided on
 ```
+
+**A paper needs at least 12 references, and 15 to 25 is the normal range.** One search does not get you there:
+its recall covers one subtopic, so run several, one per angle. For a typical study that means the dataset or
+benchmark you used, the existing methods for the task itself, the metric or statistical machinery you rely on,
+and the field each control task belongs to. Concatenate every hit you want into one `picks.json`. `omnisci_bib`
+tells you the count it wrote and warns when it is under the floor; a thin bibliography is not a compile error,
+it just makes the related-work discussion visibly weak.
 
 Write the combined picks under the case, for example `host/picks.json`, then call `omnisci_bib` with that
 relative path. Do not invoke `lit_cli.py bib` through `bash`; only the dedicated tool creates the session
@@ -165,6 +176,12 @@ the keys **it** prints. `bib` rejects picks without a DOI and re-fetches each DO
 loses its citation; a changed or hand-written bibliography fails the gate's provenance hash.
 
 ### 4. Get the writing contract, outline, write, and compile
+
+`omnisci_compile` ends with an **acceptance report**: the engine's paper lint (printed reference count with a
+floor of 15, result-number density per paragraph, table rules, overfull boxes, missing glyphs, figure fonts and
+colours, stripper wreckage in the abstract, and more). Red items are labels, not a gate: the PDF is already on
+disk. Treat them as the remaining distance to the house standard and fix them before delivery when you can. A
+`refs_count` red means going back to `lit_cli.py`, not rewording.
 
 Before drafting any prose, print the contract selected from the case's field or explicit style:
 

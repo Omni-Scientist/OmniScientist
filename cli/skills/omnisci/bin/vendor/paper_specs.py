@@ -80,49 +80,8 @@ _P = {
     "expt_char":  "the characterization and measurement instruments and protocols",
 }
 
-# Introduction jobs are venue-specific. Keep these separate from the reusable body-section jobs above: collapsing
-# every field onto motiv/prior/gap/this is exactly the kind of flattening that loses the venue's rhetorical shape.
-_INTRO = {
-    "earth_space": [
-        "BIG PICTURE: open with one broad present-tense statement of established fact and explain why the phenomenon "
-        "matters; do not open with a laundry list of applications",
-        "NARROW TO SUBTOPIC: zoom from that framing to the specific regime, mechanism, or measurement addressed here",
-        "PRIOR WORK: synthesize the relevant literature densely and build one cited argument toward the unresolved "
-        "question rather than piling references",
-        "GAP: state precisely what remains unresolved, contradictory, or unmeasured",
-        "THIS STUDY: state the aim, approach, and data or sample, then give a qualitative preview of the finding; keep "
-        "exact result numbers in the Abstract and Results",
-    ],
-    "cs_ml": [
-        "CONTEXT: establish the task or capability and narrow quickly to this paper's specific problem",
-        "GAP: explain what prior approaches do, where they fall short, and end on the precise open question",
-        "APPROACH: name the method or idea and give its one-line intuition with minimal technical detail",
-        "RESULTS PREVIEW: state the headline outcome in one sentence with only the single flagship number",
-        "CONTRIBUTIONS: end with a short lead-in and a LaTeX itemize list of three or four verb-first contributions",
-    ],
-    "biomed": [
-        "CLINICAL IMPORTANCE: establish why the problem matters clinically or biologically in a concrete opening",
-        "WHAT IS KNOWN AND THE GAP: synthesize the pertinent evidence or current standard, then name the specific gap",
-        "OBJECTIVE: end with an explicit aim or purpose statement and do not preview results or performance numbers",
-    ],
-    "physics": [
-        "CONTEXT: introduce the broad phenomenon in plain language that a physicist outside the subfield can follow",
-        "STAKES AND GAP: explain why the specific quantity or problem matters and what has remained unresolved",
-        "THIS WORK AND RESULT: state what was done and the headline result together, using at most one key number",
-        "IMPLICATION: close with what the result enables or means for the physical question",
-    ],
-    "chem": [
-        "IMPORTANCE: establish why the compound class, property, or measurement matters",
-        "PRIOR ART AND GAP: summarize established approaches briefly, then identify the unresolved challenge",
-        "THIS WORK AND PREVIEW: announce what was made, computed, or measured together with one key result",
-        "SIGNIFICANCE: close with the conceptual advance or capability supported by that result",
-    ],
-}
-
 
 def _sec(name, words, paras, outline, cite=False, floats="none"):
-    if list(paras) != [len(outline), len(outline)]:
-        raise ValueError("%s must define exactly one paragraph per ordered job" % name)
     return {"name": name, "words": words, "paras": paras, "outline": outline, "cite": cite, "floats": floats}
 
 
@@ -134,16 +93,17 @@ FIELD_SPECS = {
                          ["one paragraph: context; the gap; the data and approach; the headline results with numbers; the significance"]),
         "order": ["Introduction", "Data", "Methods", "Results", "Discussion", "Conclusions"],
         "sections": {
-            "Introduction": _sec("Introduction", [750, 1100], [5, 5], _INTRO["earth_space"], cite=True),
-            "Data":         _sec("Data", [350, 800], [4, 4],
+            "Introduction": _sec("Introduction", [600, 1100], [4, 5],
+                                 [_P["motiv"], _P["prior1"], _P["gap"], _P["this"]], cite=True),
+            "Data":         _sec("Data", [350, 800], [3, 4],
                                  [_P["data_prov"], _P["data_sel"], _P["data_qual"], _P["data_prep"]], floats="some"),
-            "Methods":      _sec("Methods", [450, 1000], [4, 4],
+            "Methods":      _sec("Methods", [450, 1000], [3, 4],
                                  [_P["meth_over"], _P["meth_feat"], _P["meth_proc"], _P["meth_eval"]]),
-            "Results":      _sec("Results", [700, 1600], [4, 4],
+            "Results":      _sec("Results", [700, 1600], [4, 6],
                                  [_P["res_lead"], _P["res_mech"], _P["res_supp"], _P["res_robust"]], floats="lead"),
-            "Discussion":   _sec("Discussion", [500, 1200], [4, 4],
-                                 [_P["disc_interp"], _P["disc_prior"], _P["disc_impl"], _P["disc_limit"]]),
-            "Conclusions":  _sec("Conclusions", [200, 450], [2, 2], [_P["concl"], _P["concl_out"]]),
+            "Discussion":   _sec("Discussion", [500, 1200], [3, 4],
+                                 [_P["disc_interp"], _P["disc_prior"], _P["disc_impl"], _P["disc_limit"]], cite=True),
+            "Conclusions":  _sec("Conclusions", [200, 450], [1, 2], [_P["concl"], _P["concl_out"]]),
         },
     },
 
@@ -153,15 +113,16 @@ FIELD_SPECS = {
                          ["one paragraph: context and why it matters; the gap; what we propose and the key idea; headline results with numbers; the takeaway"]),
         "order": ["Introduction", "Related Work", "Method", "Experiments", "Conclusion", "Limitations"],
         "sections": {
-            "Introduction": _sec("Introduction", [500, 900], [5, 5], _INTRO["cs_ml"], cite=True),
-            "Related Work": _sec("Related Work", [400, 700], [3, 3],
+            "Introduction": _sec("Introduction", [500, 900], [4, 5],
+                                 [_P["motiv"], _P["gap"], _P["this"], _P["contrib"]], cite=True),
+            "Related Work": _sec("Related Work", [400, 700], [3, 4],
                                  [_P["rw_theme"], _P["rw_theme"], _P["rw_theme"]], cite=True),
-            "Method":       _sec("Method", [500, 1100], [3, 3],
+            "Method":       _sec("Method", [500, 1100], [3, 5],
                                  [_P["meth_over"], _P["meth_feat"], _P["meth_proc"]]),
-            "Experiments":  _sec("Experiments", [800, 1600], [4, 4],
+            "Experiments":  _sec("Experiments", [800, 1600], [4, 6],
                                  [_P["exp_setup"], _P["exp_main"], _P["exp_abl"], _P["res_robust"]], floats="lead"),
-            "Conclusion":   _sec("Conclusion", [150, 350], [2, 2], [_P["concl"], _P["concl_out"]]),
-            "Limitations":  _sec("Limitations", [150, 320], [1, 1], [_P["disc_limit"]]),
+            "Conclusion":   _sec("Conclusion", [150, 350], [1, 2], [_P["concl"], _P["concl_out"]]),
+            "Limitations":  _sec("Limitations", [150, 320], [1, 2], [_P["disc_limit"]]),
         },
     },
 
@@ -171,12 +132,13 @@ FIELD_SPECS = {
                          ["one paragraph: context and importance; the objective; what was done (cohort/model); key quantitative results; the principal conclusion"]),
         "order": ["Introduction", "Results", "Discussion", "Methods"],
         "sections": {
-            "Introduction": _sec("Introduction", [400, 700], [3, 3], _INTRO["biomed"], cite=True),
-            "Results":      _sec("Results", [800, 1800], [4, 4],
+            "Introduction": _sec("Introduction", [400, 700], [3, 4],
+                                 [_P["motiv"], _P["prior1"], _P["gap"], _P["this"]], cite=True),
+            "Results":      _sec("Results", [800, 1800], [4, 6],
                                  [_P["res_lead"], _P["res_mech"], _P["res_supp"], _P["res_robust"]], floats="lead"),
-            "Discussion":   _sec("Discussion", [500, 1000], [4, 4],
-                                 [_P["disc_interp"], _P["disc_prior"], _P["disc_impl"], _P["disc_limit"]]),
-            "Methods":      _sec("Methods", [500, 1200], [4, 4],
+            "Discussion":   _sec("Discussion", [500, 1000], [3, 5],
+                                 [_P["disc_interp"], _P["disc_prior"], _P["disc_impl"], _P["disc_limit"]], cite=True),
+            "Methods":      _sec("Methods", [500, 1200], [3, 5],
                                  [_P["meth_over"], _P["meth_feat"], _P["meth_proc"], _P["meth_eval"]]),
         },
     },
@@ -187,14 +149,15 @@ FIELD_SPECS = {
                          ["one paragraph: physical problem; approach; the principal result stated quantitatively; the significance"]),
         "order": ["Introduction", "Theory and Methods", "Results", "Discussion", "Conclusion"],
         "sections": {
-            "Introduction":       _sec("Introduction", [500, 1100], [4, 4], _INTRO["physics"], cite=True),
-            "Theory and Methods": _sec("Theory and Methods", [500, 1300], [4, 4],
+            "Introduction":       _sec("Introduction", [500, 1100], [3, 5],
+                                       [_P["motiv"], _P["prior1"], _P["gap"], _P["this"]], cite=True),
+            "Theory and Methods": _sec("Theory and Methods", [500, 1300], [3, 5],
                                        [_P["theory"], _P["meth_feat"], _P["meth_proc"], _P["meth_eval"]]),
-            "Results":            _sec("Results", [800, 1900], [4, 4],
+            "Results":            _sec("Results", [800, 1900], [4, 6],
                                        [_P["res_lead"], _P["res_mech"], _P["res_supp"], _P["res_robust"]], floats="lead"),
-            "Discussion":         _sec("Discussion", [500, 1200], [4, 4],
-                                       [_P["disc_interp"], _P["disc_prior"], _P["disc_impl"], _P["disc_limit"]]),
-            "Conclusion":         _sec("Conclusion", [250, 550], [2, 2], [_P["concl"], _P["concl_out"]]),
+            "Discussion":         _sec("Discussion", [500, 1200], [2, 4],
+                                       [_P["disc_interp"], _P["disc_prior"], _P["disc_impl"], _P["disc_limit"]], cite=True),
+            "Conclusion":         _sec("Conclusion", [250, 550], [1, 3], [_P["concl"], _P["concl_out"]]),
         },
     },
 
@@ -204,13 +167,14 @@ FIELD_SPECS = {
                          ["one paragraph: field context; the challenge; what was made or measured; two to three specific results with numbers; the conceptual advance"]),
         "order": ["Introduction", "Experimental Section", "Results and Discussion", "Conclusions"],
         "sections": {
-            "Introduction":           _sec("Introduction", [400, 900], [4, 4], _INTRO["chem"], cite=True),
-            "Experimental Section":   _sec("Experimental Section", [400, 1000], [4, 4],
+            "Introduction":           _sec("Introduction", [400, 900], [3, 4],
+                                           [_P["motiv"], _P["prior1"], _P["gap"], _P["this"]], cite=True),
+            "Experimental Section":   _sec("Experimental Section", [400, 1000], [3, 5],
                                            [_P["expt_mat"], _P["expt_char"], _P["meth_proc"], _P["meth_eval"]]),
-            "Results and Discussion": _sec("Results and Discussion", [1000, 2200], [6, 6],
+            "Results and Discussion": _sec("Results and Discussion", [1000, 2200], [5, 8],
                                            [_P["res_lead"], _P["res_mech"], _P["res_supp"], _P["disc_interp"],
                                             _P["disc_prior"], _P["disc_limit"]], cite=True, floats="lead"),
-            "Conclusions":            _sec("Conclusions", [150, 350], [2, 2], [_P["concl"], _P["concl_out"]]),
+            "Conclusions":            _sec("Conclusions", [150, 350], [1, 2], [_P["concl"], _P["concl_out"]]),
         },
     },
 }

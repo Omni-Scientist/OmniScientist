@@ -126,14 +126,6 @@ export function quirks(
 }
 
 /**
- * 只有 OpenAI 的推理模型收 reasoning_effort。给 Anthropic 的 OpenAI 兼容端点
- * 或 DeepSeek 塞这个字段会 400，所以按模型名判，别按"用户填了就发"。
- */
-export function supportsEffort(model: string): boolean {
-  return /^(gpt-5|o[1-9]([-.]|$))/.test(model);
-}
-
-/**
  * gpt-5.6 认这几档（2026-08-16 实测枚举，错的值 API 会把合法列表回给你）。
  * 没有 max：想要最强思考就是 xhigh。
  */
@@ -148,6 +140,58 @@ export type Effort = (typeof EFFORT_LEVELS)[number];
  * 实测 none 2.4s / medium 约 4s / high 5.7s / xhigh 14.3s。
  */
 export const DEFAULT_EFFORT: Effort = "medium";
+
+/** GLM 认的三档。没有 none / medium / xhigh，塞过去 400。 */
+export const GLM_EFFORT_LEVELS = ["low", "high", "max"] as const;
+
+export interface EffortRule {
+  /**
+   * 匹配模型名的正则源码。存字符串不存 RegExp，是因为设置界面要按用户正在敲的
+   * 模型名实时判该不该显示这一行，整张表要能 JSON 发到前端去。
+   */
+  pattern: string;
+  /** 这一族认哪几档。不在表里的值同样 400。 */
+  levels: readonly string[];
+  /** 不显式选时给哪一档。 */
+  fallback: string;
+  /**
+   * 这一族不给档位就不能用，所以在哪个通道上装配都要填默认值。
+   * false 的只有官方通道给默认，见 model-config 的 boot()。
+   */
+  required: boolean;
+}
+
+/**
+ * 哪些模型收 reasoning_effort，各自认哪几档。
+ *
+ * 按模型名判，别按"用户填了就发"：给 Anthropic 的 OpenAI 兼容端点或 DeepSeek
+ * 塞这个字段会 400。各家的合法档位也不是同一套，所以档位跟着规则走，不共用一张表。
+ * 这里是唯一真值，设置界面从后端取这张表，不许再写第二份正则。
+ */
+export const EFFORT_RULES: readonly EffortRule[] = [
+  { pattern: "^(gpt-5|o[1-9]([-.]|$))", levels: EFFORT_LEVELS, fallback: DEFAULT_EFFORT, required: false },
+  // GLM-5.3-flash 上游原话：always engages in thinking and cannot be disabled;
+  // please use low, high, or max。2026-09-01 在产线上实测，不给档位它把整个
+  // max_tokens 烧在思考上、正文返回空串，比 400 还难查，所以这一族是 required。
+  { pattern: "^glm-", levels: GLM_EFFORT_LEVELS, fallback: "low", required: true },
+];
+
+/** 这个模型名落在哪条规则上。都不匹配就是不收这个字段。 */
+export function effortRuleFor(model: string): EffortRule | null {
+  const name = model.trim();
+  if (!name) return null;
+  return EFFORT_RULES.find((rule) => new RegExp(rule.pattern).test(name)) ?? null;
+}
+
+/** 这个模型认哪几档。不收这个字段的返回空数组。 */
+export function effortLevelsFor(model: string): readonly string[] {
+  return effortRuleFor(model)?.levels ?? [];
+}
+
+/** 收不收 reasoning_effort。 */
+export function supportsEffort(model: string): boolean {
+  return effortRuleFor(model) !== null;
+}
 
 /**
  * 输出上限该用哪个字段名。
@@ -425,7 +469,7 @@ export interface ModelClientOptions {
    *  而 PROVIDERS.custom.baseURL 是模块加载时从环境变量读死的。 */
   baseURL?: string;
   maxTokens?: number;
-  /** 推理档位，只对 OpenAI 推理模型有效，见 EFFORT_LEVELS。 */
+  /** 推理档位。收不收、认哪几档按模型名判，见 EFFORT_RULES。 */
   effort?: string;
 }
 

@@ -6,6 +6,7 @@ matplotlib
 sympy          # check_math
 imageio        # look_at_video
 pypdfium2      # render_review_pages：编译后的 PDF 逐页转 PNG 供自审
+pymupdf        # paperlint：验收检查读 PDF 版面（印出来的引用数、References 之后的浮动体、图内字号）
 soundfile      # look_at_audio
 # your analysis scripts will usually want these too
 scipy

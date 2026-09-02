@@ -79,15 +79,31 @@ export function visionConfig(): VisionConfig {
 let client: ModelClient | null = null;
 let clientKey = "";
 
+/**
+ * 视觉侧车的输出上限。默认 8000，`OMNISCI_VISION_MAX_TOKENS` 可调。
+ *
+ * 以前写死 1200，理由是"一段观察用不了那么多"。这忽略了推理模型：DeepSeek V4、GLM、Qwen
+ * 这类模型的思考 token 也从这个上限里扣、而且先扣，1200 被想没了，正文一个字没有，
+ * finish_reason=length，用户看到的是"视觉模型没有返回观察文本"（2026-09-02 在
+ * deepseek-v4-flash-vision-exp 上实测）。之前给 gpt-5.x 单独加余量修过一次同样的坑，
+ * 按模型名开口子，换一个模型就再漏一次。所以这里不认模型名：上限是天花板不是消费，
+ * 不推理的模型说完就停、一个 token 不多花；推理的模型有地方想。
+ */
+export function visionMaxTokens(): number {
+  const raw = (process.env.OMNISCI_VISION_MAX_TOKENS ?? "").trim();
+  const n = Number(raw);
+  return raw && Number.isInteger(n) && n > 0 ? n : 8000;
+}
+
 /** 配置变了就换一个客户端，别拿旧地址旧 key 继续发。 */
-function clientFor(config: VisionConfig): ModelClient {
+function clientFor(config: VisionConfig, maxTokens = visionMaxTokens()): ModelClient {
   // JSON.stringify 而不是 join：拼接符再巧也可能出现在值里，两个不同配置可以拼出同一个 key。
-  const key = JSON.stringify([config.provider, config.model, config.baseUrl ?? "", config.apiKey ?? "", config.effort ?? ""]);
+  const key = JSON.stringify([config.provider, config.model, config.baseUrl ?? "", config.apiKey ?? "", config.effort ?? "", maxTokens]);
   if (!client || clientKey !== key) {
     client = new ModelClient({
       provider: config.provider,
       model: config.model,
-      maxTokens: 1200,
+      maxTokens,
       ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
       ...(config.apiKey ? { apiKey: config.apiKey } : {}),
       ...(config.effort ? { effort: config.effort } : {}),
@@ -200,11 +216,39 @@ export function pendingQuestionsFor(root: string, imagePath: string): string[] {
   return out;
 }
 
+/**
+ * 图片路径解析。case 目录优先，工作区根兜底。
+ *
+ * host/renders 在 case 目录下，evidence_cli.py 报的也是 case 相对路径，所以
+ * caseRoot 是主基准。但模型也会写工作区相对路径（datasets/<名字>/host/...），
+ * 那条同样合法，所以两个基准都试。越界检查在 ctx 里，两条路都过同一道。
+ *
+ * 两边都不存在就抛，并且把试过的路径写进错误里：以前只有一条裸 ENOENT，
+ * agent 看不出自己少了 datasets/<名字> 那一层，会一直原地改路径试。
+ */
+function resolveImagePath(ctx: ToolContext, requested: string): string {
+  const fromCase = ctx.resolveCase(requested);
+  if (existsSync(fromCase)) return fromCase;
+
+  const fromRoot = ctx.resolve(requested);
+  if (existsSync(fromRoot)) return fromRoot;
+
+  const tried = fromCase === fromRoot ? fromCase : `${fromCase}\n  ${fromRoot}`;
+  throw new Error(
+    `找不到图片 ${requested}。试过：\n  ${tried}\n`
+    + `host/ 下的路径是相对 case 目录（${relative(ctx.root, ctx.caseRoot) || "."}）的。`,
+  );
+}
+
 export function buildImageRequest(args: Record<string, unknown>, ctx: ToolContext) {
   const requested = String(args.path ?? "");
   if (!requested) throw new Error("view_image 需要 path");
 
-  const path = ctx.resolve(requested);
+  // host/ 下的图是 case 目录里的，python 那边（evidence_cli.py 的 renders）报的也是
+  // case 相对路径，所以先按 caseRoot 解。但模型有时会给工作区相对路径
+  // （datasets/<名字>/host/...），那条也得认，所以两个基准都试。
+  // 不是吞错：两边都不存在就抛，而且把试过的两条路径都写出来，比裸 ENOENT 好查。
+  const path = resolveImagePath(ctx, requested);
   const stat = statSync(path);
   if (!stat.isFile()) throw new Error(`不是图片文件: ${requested}`);
   if (stat.size > MAX_IMAGE_BYTES) {
@@ -216,12 +260,17 @@ export function buildImageRequest(args: Record<string, unknown>, ctx: ToolContex
     throw new Error(`view_image 只支持 ${Object.keys(MIME).join(", ")}，收到 ${requested}`);
   }
 
-  const rel = relative(ctx.root, path) || requested;
+  // 报给模型的相对路径也用 case 基准，跟 evidence_cli.py 说的是同一套坐标。
+  // 以前用工作区基准，模型把它原样传回来就少了 datasets/<名字> 那一层。
+  // 基准要先 realpath：path 是 realpath 过的，base 不过的话，只要路上有一个符号
+  // 链接（macOS 的 /tmp -> /private/tmp 就是）算出来的就是一串 ../../..。
+  const relBase = existsSync(ctx.caseRoot) ? realpathSync(ctx.caseRoot) : ctx.caseRoot;
+  const rel = relative(relBase, path) || requested;
   const asked = String(args.question ?? "").trim();
   // 图上挂着待处理的感知请求时，用它记下的那句问题。这不是替 agent 改写意图：
   // 那句问题就是流水线要答的那一问，gate 也是按它校验回执的。agent 想问别的，
   // 等这一问答完再单独问一次即可。
-  const pending = pendingQuestionsFor(ctx.root, path);
+  const pending = pendingQuestionsFor(ctx.caseRoot, path);
   const adopted = pending.length && !pending.includes(asked) ? pending[0]! : "";
   const question = adopted || asked || "请忠实描述图中可见的结构、异常和不确定之处。";
   const data = readFileSync(path).toString("base64");
@@ -247,26 +296,50 @@ export function buildImageRequest(args: Record<string, unknown>, ctx: ToolContex
   };
 }
 
+const VISION_SYSTEM =
+  "You are the visual perception sidecar for a scientific agent. Inspect the actual pixels. " +
+  "Return a compact factual observation, distinguish observation from uncertainty, and do not propose a paper or analysis.";
+
+/** 一次视觉调用，给多大的输出上限由调用方定。 */
+async function askVision(config: VisionConfig, message: unknown, maxTokens: number) {
+  return clientFor(config, maxTokens).streamTurn(
+    [{ role: "system", content: VISION_SYSTEM }, message as never],
+    [],
+  );
+}
+
+/** 空正文的报错要把能诊断的都带上：是预算被推理吃光（length）还是服务端空回（stop）。 */
+export function emptyObservationError(model: string, tries: Array<{ cap: number; finishReason: string | null; completion: number }>): Error {
+  const detail = tries
+    .map((t) => `cap=${t.cap} finish_reason=${t.finishReason ?? "?"} 输出 ${t.completion} token`)
+    .join("；再试 ");
+  const hint = tries.some((t) => t.finishReason === "length")
+    ? "finish_reason=length 说明输出上限被推理吃光了，调大 OMNISCI_VISION_MAX_TOKENS。"
+    : "上限没用完却是空的，是服务端返回了空回复，多半是瞬时故障，稍后重试。";
+  return new Error(`视觉模型 ${model} 没有返回观察文本（${detail}）。${hint}`);
+}
+
 export async function viewImage(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const request = buildImageRequest(args, ctx);
   const config = visionConfig();
-  const turn = await clientFor(config).streamTurn(
-    [
-      {
-        role: "system",
-        content:
-          "You are the visual perception sidecar for a scientific agent. Inspect the actual pixels. " +
-          "Return a compact factual observation, distinguish observation from uncertainty, and do not propose a paper or analysis.",
-      },
-      request.message,
-    ],
-    [],
-  );
-  const observation = turn.message.content?.trim();
-  if (!observation) throw new Error(`视觉模型 ${config.model} 没有返回观察文本`);
+  const cap = visionMaxTokens();
+  let turn = await askVision(config, request.message, cap);
+  let observation = turn.message.content?.trim();
+  const tries = [{ cap, finishReason: turn.finishReason, completion: turn.usage.completionTokens }];
+  if (!observation) {
+    // 空正文不看是哪家模型，一律换更大的预算再试一次：推理模型是预算被吃光，
+    // 服务端偶发空回也靶不过重试。第一次的钱照样计入 usage，账要老实。
+    const bigger = Math.max(cap * 3, 24_000);
+    turn = await askVision(config, request.message, bigger);
+    observation = turn.message.content?.trim();
+    tries.push({ cap: bigger, finishReason: turn.finishReason, completion: turn.usage.completionTokens });
+  }
+  if (!observation) throw emptyObservationError(config.model, tries);
   if (turn.message.tool_calls?.length) throw new Error(`视觉模型 ${config.model} 意外返回了 tool call`);
   const receipt = recordPerceptionReceipt(
-    ctx.root,
+    // host/calls 在 case 目录下。用 ctx.root 的话，工作区里放了多个数据集时
+    // callsDir 根本不存在，回执永远绑不上（matched=0），而且是静默的。
+    ctx.caseRoot,
     request.path,
     request.question,
     observation,

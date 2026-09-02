@@ -128,6 +128,22 @@ export function repairToolCallGaps(messages: unknown[]): number {
  * 对应的 tool 消息，否则下一次请求会被 OpenAI 兼容接口判 400，用户"接着聊"就永远
  * 卡住。这个坑本会话前面已经踩过一次（空 assistant 消息那次）。
  */
+/**
+ * 网络抖动、5xx、限流这类瞬时错误。鉴权（401/403）、余额（402）、请求本身不对（400）不算，
+ * 那些重试也不会好。ModelClient 故意 maxRetries: 0（网络层静默重试是吞错），所以重试放在
+ * 这里，每次都通过 presenter.note 说出来，人和日志都看得见。
+ */
+export function isTransientModelError(error: unknown): boolean {
+  const status = (error as { status?: number } | null)?.status;
+  if (typeof status === "number") return [408, 409, 425, 429, 500, 502, 503, 504].includes(status);
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return /APIConnection|Timeout/i.test(name)
+    || /fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|socket hang up|timed? ?out|overloaded|Connection error/i.test(message);
+}
+
+const TRANSIENT_RETRY_DELAYS_MS = [1_000, 3_000, 8_000];
+
 function isAbortError(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name;
   return name === "AbortError" || name === "APIUserAbortError";
@@ -264,6 +280,7 @@ export class AgentLoop {
 
     // 这一轮是不是已经为了撑破窗口抢救过一次。防的是压完还超、压完还超的死循环。
     let rescued = false;
+    let transientRetries = 0;
 
     for (let turn = 0; turn < turnLimit; turn++) {
       if (signal?.aborted) return halted(turn);
@@ -310,6 +327,18 @@ export class AgentLoop {
       } catch (error) {
         // 被掐断的请求不是故障，也没有半条消息留在数组里，直接干净收工。
         if (signal?.aborted || isAbortError(error)) return halted(turn);
+        // 瞬时错误（网络抖动 / 5xx / 429）不该让一场跑了几十步的研究整场作废。
+        // 2026-09-02 实测：64 步之后一次连接错误，整轮中断，界面还把它说成"没配 key"。
+        // 有上限（3 次）、有退避、每次都说出来，这不是静默重试。
+        if (isTransientModelError(error) && transientRetries < TRANSIENT_RETRY_DELAYS_MS.length) {
+          const delay = TRANSIENT_RETRY_DELAYS_MS[transientRetries]!;
+          transientRetries += 1;
+          const what = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+          this.presenter.note?.(`模型服务瞬时错误（${what.slice(0, 120)}），${delay / 1000}s 后第 ${transientRetries}/${TRANSIENT_RETRY_DELAYS_MS.length} 次重试`);
+          await new Promise((r) => setTimeout(r, delay));
+          if (signal?.aborted) return halted(turn);
+          continue;
+        }
         // 光输入就撑破窗口，但手里有完整历史，压一轮还能救。预算闸是拿估算算的，
         // 估算再准也可能差那么几十个 token（实测差过 53 和 83），差一点就整场作废
         // 太亏了。压到只剩最近一轮，这是最后一次机会，所以下狠手。
@@ -328,6 +357,7 @@ export class AgentLoop {
       // 这一轮活着回来了，救援额度还回去：下次再撞窗口还能再救一次。
       // 不还的话，一场长研究里只要早期救过一次，后面就再也救不了了。
       rescued = false;
+      transientRetries = 0;
       // SDK 被 abort 时不保证抛异常：实测有时只是把流悄悄结束掉，于是这一轮
       // 看起来像正常收尾，界面就写成"研究运行完成"。只认信号，不猜 SDK 的行为。
       if (signal?.aborted) return halted(turn);

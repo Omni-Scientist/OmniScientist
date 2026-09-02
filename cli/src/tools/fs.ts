@@ -64,8 +64,21 @@ function readFile(args: Record<string, unknown>, ctx: ToolContext): string {
  * 只认 .json 后缀，别的一律不碰：.jsonl 每行一个对象、模板文件带占位符，
  * 拿严格 JSON 去卡它们就是误伤。
  */
-function checkJsonBeforeWrite(rel: string, content: string): void {
-  if (!/\.json$/i.test(rel.trim())) return;
+function isJsonPath(rel: string): boolean {
+  return /\.json$/i.test(rel.trim());
+}
+
+function isValidJson(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function checkJsonBeforeWrite(rel: string, content: string, when = "这份内容"): void {
+  if (!isJsonPath(rel)) return;
   if (!content.trim()) return; // 空文件让它写，那是清空的意思
   try {
     JSON.parse(content);
@@ -81,7 +94,7 @@ function checkJsonBeforeWrite(rel: string, content: string): void {
         + `再用 json.dump 落盘。转义交给 json 库，你只管内容。`
       : "";
     throw new Error(
-      `没写：${rel} 的内容不是合法 JSON，落盘只会让下游工具报一个看不懂的错。\n`
+      `没写：${rel} ${when}不是合法 JSON，落盘只会让下游工具报一个看不懂的错。\n`
       + `解析器说：${why}\n`
       + `按这个位置改好再写。常见原因是字符串没闭合、少了逗号、多了尾逗号。`
       + `${bulky}\n`
@@ -119,7 +132,20 @@ function editFile(args: Record<string, unknown>, ctx: ToolContext): string {
       `把 old_string 扩大到唯一，或者传 replace_all=true。`,
     );
   }
-  writeFileSync(path, text.split(oldStr).join(newStr), "utf-8");
+  const next = text.split(oldStr).join(newStr);
+
+  // write_file 早就有这道闸，edit_file 一直是敞的，而删字段这种操作恰恰只会用 edit_file。
+  // 2026-09-01 实测：模型删掉 sections.json 的最后一个字段 Conclusions，留下前一条的
+  // 尾逗号，工具报成功，直到两步之后 paper_cli.py 抛一条截断的 Traceback 才暴露，
+  // 模型还得自己去数第 14818 个字符在哪。
+  //
+  // 只在「改之前是合法 JSON」时才卡：文件本来就坏，正是要靠 edit_file 修回来的，
+  // 那时候拦住等于把唯一的修复手段也堵死。
+  if (isJsonPath(rel) && text.trim() && isValidJson(text)) {
+    checkJsonBeforeWrite(rel, next, "改完之后");
+  }
+
+  writeFileSync(path, next, "utf-8");
   return `改好 ${rel}（替换 ${count} 处）`;
 }
 

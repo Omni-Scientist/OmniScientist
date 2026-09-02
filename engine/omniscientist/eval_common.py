@@ -38,11 +38,15 @@ def panel2(path):
     return out
 
 
+# The full demonstration suite. storm_radar_video and cell_video originally failed at
+# ideation because the video frame sampler charged the image budget per frame and fed the
+# VLM one isolated frame at a time; both complete end to end since that was fixed.
 BASE34 = ("nffa_sem rruff_raman supercon chem_series feynman eurosat_demo galaxy galaxy_xsurvey "
           "gwosc_gw stead_seismic whoi_plankton rock_ct storm_track histopath_demo chestxray "
           "med_ct3d heartsound sleepedf dna plantvillage hyperspectral calms21 birdaudio "
           "whale_audio plant_pheno3d fish_sonar_video animal_track mcb_cad semantickitti "
-          "comma2k19 machine_sound vehicle_track pdebench kg_biokg").split()
+          "comma2k19 machine_sound vehicle_track pdebench kg_biokg "
+          "storm_radar_video cell_video").split()
 
 
 def _base_paths():

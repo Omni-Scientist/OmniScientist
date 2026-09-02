@@ -115,6 +115,29 @@ def _naming_render(orig):
 
 
 # ---------------------------------------------------------------- case + state
+def _claims(series_path, case_dir, sub):
+    """True when this series.json lists member files under sub, i.e. the case owns that folder."""
+    try:
+        doc = json.load(open(series_path))
+    except Exception:
+        return False
+    subp = sub.rstrip(os.sep)
+    prefix = subp + os.sep
+    for m in (doc.get("members") or [])[:200]:
+        f = m.get("file") if isinstance(m, dict) else None
+        if not f:
+            continue
+        fa = os.path.abspath(os.path.join(case_dir, f))
+        # a member file under the given folder, or the given folder inside a
+        # member's directory subtree: either way the case owns that folder
+        if fa.startswith(prefix):
+            return True
+        fdir = os.path.dirname(fa)
+        if subp == fdir or subp.startswith(fdir + os.sep):
+            return True
+    return False
+
+
 def resolve_task(task):
     """A task is a directory holding series.json; a bare name is looked up under the engine's examples/."""
     cands = [task, os.path.join(os.environ.get("OMNISCI_CASES", ""), task) if os.environ.get("OMNISCI_CASES") else None,
@@ -122,7 +145,26 @@ def resolve_task(task):
     for c in cands:
         if c and os.path.exists(os.path.join(c, "series.json")):
             return os.path.abspath(c)
-    raise SystemExit("no series.json for task %r (looked in: %s)" % (task, ", ".join(x for x in cands if x)))
+    # Users often point at a subfolder of the case (typically its data/ directory).
+    # Only walk upward for path-like arguments (a bare name is an examples/ lookup;
+    # a typo there must stay loud), and only adopt a parent whose series.json
+    # actually lists files under the folder we were given.
+    if os.sep in task or os.path.exists(task):
+        sub = os.path.abspath(task)
+        p = sub
+        for _ in range(3):
+            parent = os.path.dirname(p)
+            if parent == p or parent in ("/", os.path.expanduser("~")):
+                break
+            p = parent
+            sj = os.path.join(p, "series.json")
+            if os.path.exists(sj):
+                if _claims(sj, p, sub):
+                    sys.stderr.write("note: case resolved upward to %s (its series.json lists files under %s)\n" % (p, task))
+                    return p
+                break
+    raise SystemExit("no series.json for task %r or a parent that claims it; for a bare data folder run case_cli.py inspect + init first (looked in: %s)"
+                     % (task, ", ".join(x for x in cands if x)))
 
 
 def case_path(td, p):

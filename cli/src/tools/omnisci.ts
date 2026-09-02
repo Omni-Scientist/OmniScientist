@@ -205,7 +205,32 @@ async function bib(args: Record<string, unknown>, ctx: ToolContext): Promise<str
     provenance_sha256: fileSha256(provenancePath),
     picks_sha256: fileSha256(picks),
   };
-  return receiptText(receipt, `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr}` : ""}`, ctx);
+  const thin = thinBibliographyNote(bibPath);
+  return receiptText(
+    receipt,
+    `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr}` : ""}${thin}`,
+    ctx,
+  );
+}
+
+/**
+ * 引用太少时当场说出来。
+ *
+ * 这里只警告，不抛错。硬拦会让用户空着手走，而参考文献少是「论文偏弱」不是
+ * 「论文不成立」。但也不能沉默：2026-09-01 实测，一篇 med_ct3d 的论文只带了 5 条
+ * 引用就一路走到交付，全链路没有任何一处提过数量 —— SKILL.md 没写，gate 没查，
+ * 编译不管。模型做了一次 `--n 6` 的搜索，挑了 5 条，然后就以为这一步做完了。
+ */
+const BIB_FLOOR = 12;
+
+function thinBibliographyNote(bibPath: string): string {
+  const entries = (readFileSync(bibPath, "utf-8").match(/^@/gm) ?? []).length;
+  if (entries >= BIB_FLOOR) return "";
+  return `\n\n注意：参考文献只有 ${entries} 条，少于 ${BIB_FLOOR} 条这个下限。`
+    + `一次搜索的召回撑不起一篇论文的相关工作，通常要对不同子话题各搜一轮`
+    + `（数据集与基准、任务本身的既有方法、你用的度量或统计手段、对照任务所在的领域），`
+    + `每轮 --n 8 到 10，再把所有 hit 合并进 picks.json 重新调一次 omnisci_bib。`
+    + `不是硬闸，少了照样能编译交付，但相关工作会明显单薄。`;
 }
 
 interface PaperManifest {
@@ -216,6 +241,31 @@ interface PaperManifest {
     figures?: Array<{ path?: string; sha256?: string }>;
   };
   review_pages?: Array<{ path?: string; sha256?: string }>;
+  /** 验收 lint 的标签。红了照样出 PDF，见 paper_cli.py 的 _acceptance_lint。 */
+  lint?: {
+    ok?: boolean;
+    error?: string;
+    red?: string[];
+    refs_floor?: number;
+    checks?: Record<string, { ok?: boolean; detail?: string }>;
+  };
+}
+
+/**
+ * 把验收 lint 的结果说给模型听。每次都说，包括全绿：以前这一层根本不存在，模型无从知道
+ * 论文离交付标准差在哪，5 条引用就一路走到底。红项是标签不是闸，PDF 已经生成。
+ */
+function lintNote(lint: PaperManifest["lint"]): string {
+  if (!lint) return "";
+  if (lint.error) return `\n\n验收检查没跑成（不影响 PDF）：${lint.error}`;
+  const checks = lint.checks ?? {};
+  const total = Object.keys(checks).length;
+  const red = lint.red ?? [];
+  if (!red.length) return `\n\n验收检查：${total} 项全绿。`;
+  const lines = red.map((k) => `- ${k}: ${checks[k]?.detail ?? ""}`.trimEnd());
+  return `\n\n验收检查：${total} 项里 ${red.length} 项红（PDF 已生成，这些是标签不是闸）：\n${lines.join("\n")}\n`
+    + `按条修完再 omnisci_compile 一次。refs_count 红就回到 lit_cli.py 多搜几个子话题、合并 picks 重跑 omnisci_bib；`
+    + `number_density 红就把成组的数字做成表、正文只留主效应；overfull 红多半是过长的行内公式或不可断的长串。`;
 }
 
 async function compile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
@@ -274,7 +324,11 @@ async function compile(args: Record<string, unknown>, ctx: ToolContext): Promise
     figures: manifest.inputs?.figures ?? [],
     review_pages: manifest.review_pages ?? [],
   };
-  return receiptText(receipt, `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr}` : ""}`, ctx);
+  return receiptText(
+    receipt,
+    `${result.stdout}${result.stderr ? `\n[stderr]\n${result.stderr}` : ""}${lintNote(manifest.lint)}`,
+    ctx,
+  );
 }
 
 const OPERATION_BY_TOOL: Record<string, OmniSciOperation> = {

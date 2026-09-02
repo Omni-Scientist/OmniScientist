@@ -20,7 +20,10 @@
 import { createHash } from "node:crypto";
 
 import { credentialFor } from "../../cli/src/credentials.ts";
-import { DEFAULT_EFFORT, EFFORT_LEVELS, PROVIDERS, supportsEffort, type ProviderName } from "../../cli/src/model.ts";
+import {
+  EFFORT_RULES, PROVIDERS, effortLevelsFor, effortRuleFor, supportsEffort,
+  type EffortRule, type ProviderName,
+} from "../../cli/src/model.ts";
 
 export type ProviderId = ProviderName;
 export type Scope = "model" | "vision";
@@ -57,6 +60,12 @@ export interface ChannelInfo {
   active: boolean;
   /** 这条线当前实际在用的模型，只有 active 的那个有意义。 */
   activeModel: string;
+  /** 选中的模型收不收推理档位。 */
+  supportsEffort: boolean;
+  /** 收的话认哪几档。不收就是空数组。各家不是同一套，见 EFFORT_RULES。 */
+  effortLevels: string[];
+  /** 当前选定的档位。空表示交给模型自己的默认。 */
+  effort: string;
 }
 
 export interface ModelConfig {
@@ -81,7 +90,7 @@ export interface SettingsPatch {
   removeModel?: string;
   /** 每日更新检查的开关。跟模型配置无关，但共用同一个设置面板和同一个 env 文件。 */
   updateCheck?: boolean;
-  /** 推理档位，见 EFFORTS。 */
+  /** 推理档位。收不收、认哪几档按模型名判，见 EFFORT_RULES。 */
   effort?: string;
   /** 缺省是 save。 */
   action?: Action;
@@ -159,6 +168,7 @@ export const MANAGED_ENV_NAMES: string[] = [
   "OMNISCI_PROVIDER",
   "OMNISCI_BASE_URL",
   "OMNISCI_MODEL",
+  "OMNISCI_EFFORT",
   "OMNISCI_VISION_PROVIDER",
   "OMNISCI_VISION_MODEL",
   "OMNISCI_VISION_BASE_URL",
@@ -273,7 +283,10 @@ function boot(): void {
       // 只有 OpenAI 官方通道给默认档位。别按模型名判：自定义端点上挂一个叫
       // gpt-5.x 的模型（OpenRouter、公司网关）不保证收 reasoning_effort，
       // 默认塞过去就是无缘无故 400。那边留空，要用自己明着选。
-      if (id === "openai" && supportsEffort(picked[scope][id])) efforts[scope][id] = DEFAULT_EFFORT;
+      // 例外是 required 的那一族（GLM）：不给档位它返回空串，比 400 还难查，
+      // 所以挂在哪个通道上都要给默认。
+      const rule = effortRuleFor(picked[scope][id]);
+      if (rule && (id === "openai" || rule.required)) efforts[scope][id] = rule.fallback;
     }
 
     const prefix = scope === "vision" ? "OMNISCI_VISION_" : "OMNISCI_";
@@ -289,11 +302,22 @@ function boot(): void {
     if (model) picked[scope][provider] = model;
     if (baseUrl) endpoints[provider] = baseUrl;
     if (effort) efforts[scope][provider] = effort;
+
+    // 上面那轮默认是按内置首选模型算的，env 指定的模型到这一步才落位（自定义端点
+    // 更是只有这一条路，它没有内置模型）。required 的那一族在这里补默认，否则
+    // OMNISCI_MODEL=glm-* 起来的实例档位仍然是空的，正文会返回空串。
+    const envRule = effortRuleFor(picked[scope][provider]);
+    if (!efforts[scope][provider] && envRule?.required) {
+      efforts[scope][provider] = envRule.fallback;
+    }
+
     lines[scope] = {
       provider,
       model: model || picked[scope][provider],
       baseUrl: META[provider].needsEndpoint ? baseUrl : PROVIDERS[provider].baseURL,
-      effort,
+      // 只有 required 的那一族才把通道默认带进这条线。OpenAI 那族维持原样（通道上
+      // 显示 medium、实际请求不带），改它会顺手改掉 o 系列带 tools 时的行为。
+      effort: effort || (envRule?.required ? efforts[scope][provider] : ""),
     };
   }
 }
@@ -345,8 +369,20 @@ function describe(scope: Scope, pool: ProviderId[]): ChannelInfo[] {
     active: line.provider === id,
     activeModel: line.provider === id ? line.model : "",
     supportsEffort: supportsEffort(picked[scope][id]),
+    effortLevels: [...effortLevelsFor(picked[scope][id])],
     effort: efforts[scope][id],
   }));
+}
+
+/**
+ * 推理档位的规则表，原样发给界面。
+ *
+ * 界面必须按用户此刻敲进输入框的模型名判断该不该显示那一行，而不是按后端已保存
+ * 的那个模型，所以它需要规则本身，不是一个布尔。唯一真值在 cli/src/model.ts，
+ * 前端不再自己写一份正则（写过一份，GLM 出来之后就漂了）。
+ */
+export function effortRules(): EffortRule[] {
+  return EFFORT_RULES.map((rule) => ({ ...rule, levels: [...rule.levels] }));
 }
 
 export function describeProviders(): ChannelInfo[] {
@@ -443,11 +479,16 @@ export function validatePatch(patch: SettingsPatch): string | null {
     return `${meta.label} 还没有 key`;
   }
 
-  if (patch.effort && !EFFORT_LEVELS.includes(patch.effort as never)) {
-    return `推理档位只能是 ${EFFORT_LEVELS.join(" / ")}`;
+  const model = (patch.model ?? "").trim();
+  // 档位按目标模型认的那套判。模型压根不收这个字段时不报错，装配时本来就会丢掉
+  // （见 previewConfig），报错反而会把"从 gpt-5 换成 deepseek"这种正常操作拦住。
+  if (patch.effort) {
+    const levels = effortLevelsFor(model);
+    if (levels.length && !levels.includes(patch.effort)) {
+      return `${model} 的推理档位只能是 ${levels.join(" / ")}`;
+    }
   }
 
-  const model = (patch.model ?? "").trim();
   if (!model) return "要选一个模型";
   if (/[\r\n]/.test(model)) return "模型名里不能有换行";
 
@@ -550,6 +591,9 @@ export function persistablePairs(): Record<string, string> {
   }
   out.OMNISCI_PROVIDER = lines.model.provider;
   if (lines.model.model) out.OMNISCI_MODEL = lines.model.model;
+  // boot() 一直在读 OMNISCI_EFFORT，但这里从来没写过它，所以研究模型这条线的档位
+  // 一重启就没了（视觉那条一直是对的）。两条线现在一视同仁。
+  if (lines.model.effort) out.OMNISCI_EFFORT = lines.model.effort;
   if (META[lines.model.provider].needsEndpoint && lines.model.baseUrl) {
     out.OMNISCI_BASE_URL = lines.model.baseUrl;
   }

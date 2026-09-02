@@ -25,6 +25,14 @@ export interface ToolContext {
   artifacts: ArtifactStore;
   /** 把相对路径解析到工作区内，越界直接拒绝。 */
   resolve(rel: string): string;
+  /**
+   * 同 resolve，但相对路径按 caseRoot 解。
+   *
+   * host/ 底下的东西（renders、calls、ledger）都是 case 目录里的，python 那边报的
+   * 也是 case 相对路径。用 resolve 去接就会少 datasets/<名字> 那一层。越界检查跟
+   * resolve 是同一道，仍然对着工作区根，caseRoot 只换解析基准。
+   */
+  resolveCase(rel: string): string;
 }
 
 export function makeContext(
@@ -33,30 +41,43 @@ export function makeContext(
   caseRoot?: string,
 ): ToolContext {
   const rootAbs = resolvePath(root);
+  const caseAbs = caseRoot ? resolvePath(rootAbs, caseRoot) : rootAbs;
+
+  /** 按 base 解析相对路径，越界检查永远对着工作区根。 */
+  function resolveFrom(base: string, rel: string): string {
+    // 界面把工作区根脱敏成 $WORKSPACE 展示；模型偶尔会把这种展示形态原样
+    // 抄回工具调用。它语义明确（就是工作区根），当工作区相对路径收下。
+    const shown = /^\$WORKSPACE(?=$|[\\/])/;
+    if (shown.test(rel)) {
+      base = rootAbs;
+      rel = rel.replace(shown, "").replace(/^[\\/]+/, "") || ".";
+    }
+    const p = resolvePath(base, rel);
+
+    // 只做字符串前缀比较挡不住符号链接：工作区里一个 docs -> ~/.ssh 的链接
+    // 就能让 read_file / write_file 读写工作区外的任何东西，而审批行显示的
+    // 还是工作区内的相对路径，人看到「写入 docs/x」实际落在 ~/.ssh/x。
+    // git 能携带符号链接，node_modules 里更是遍地都是，不需要攻击者构造。
+    //
+    // 所以必须 realpath 之后再判。目标可能还不存在（write_file 新建），
+    // 那就解析它最近的已存在祖先，再把剩下那截拼回去。
+    let probe = p;
+    while (!existsSync(probe) && probe !== dirname(probe)) probe = dirname(probe);
+    const real = realpathSync(probe) + p.slice(probe.length);
+    const realRoot = realpathSync(rootAbs);
+
+    if (real !== realRoot && !real.startsWith(realRoot + sep)) {
+      throw new Error(`路径越出工作区: ${rel} -> ${real}`);
+    }
+    return real;
+  }
+
   return {
     root: rootAbs,
-    caseRoot: caseRoot ? resolvePath(rootAbs, caseRoot) : rootAbs,
+    caseRoot: caseAbs,
     artifacts,
-    resolve(rel: string): string {
-      const p = resolvePath(rootAbs, rel);
-
-      // 只做字符串前缀比较挡不住符号链接：工作区里一个 docs -> ~/.ssh 的链接
-      // 就能让 read_file / write_file 读写工作区外的任何东西，而审批行显示的
-      // 还是工作区内的相对路径，人看到「写入 docs/x」实际落在 ~/.ssh/x。
-      // git 能携带符号链接，node_modules 里更是遍地都是，不需要攻击者构造。
-      //
-      // 所以必须 realpath 之后再判。目标可能还不存在（write_file 新建），
-      // 那就解析它最近的已存在祖先，再把剩下那截拼回去。
-      let probe = p;
-      while (!existsSync(probe) && probe !== dirname(probe)) probe = dirname(probe);
-      const real = realpathSync(probe) + p.slice(probe.length);
-      const realRoot = realpathSync(rootAbs);
-
-      if (real !== realRoot && !real.startsWith(realRoot + sep)) {
-        throw new Error(`路径越出工作区: ${rel} -> ${real}`);
-      }
-      return real;
-    },
+    resolve: (rel: string) => resolveFrom(rootAbs, rel),
+    resolveCase: (rel: string) => resolveFrom(caseAbs, rel),
   };
 }
 

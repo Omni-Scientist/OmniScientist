@@ -19,6 +19,7 @@ import { basename, delimiter, dirname, join, relative, resolve, sep } from "node
 
 import { ASSETS, SKILL_FILES } from "./assets.generated.ts";
 import { UpdateDownloader, isInside } from "./update-download.ts";
+import { countEntries, importJobStatus, importNeedsHint, measureTree, robocopyArgs, robocopyOk, startImportJob } from "./import-job.ts";
 import {
   autoDecision, missingNames, planFor, planIsEmpty, type Check, type InstallPlan,
 } from "./deps-plan.ts";
@@ -1247,6 +1248,9 @@ function settingsState() {
     providers: settings.describeProviders(),
     vision: settings.describeVision(),
     visionReady: settings.currentVisionConfig() !== null,
+    // 界面要按用户此刻敲进去的模型名实时判该不该显示推理档位那一行，所以给它规则
+    // 本身，不是一个布尔。唯一真值在 cli/src/model.ts 的 EFFORT_RULES。
+    effortRules: settings.effortRules(),
     updateCheck: settings.updateCheckEnabled(),
   };
 }
@@ -1335,6 +1339,13 @@ try {
 
       // 「从电脑导入」：把盘上任意文件/文件夹由后端原生复制进工作区。数据不过
       // 浏览器，多大都行。agent 只认工作区内的路径，所以落点固定是工作区。
+      // 导入进度：前端每几百毫秒问一次。done 之后带 path（工作区内相对路径）或 error。
+      if (request.method === "GET" && url.pathname === "/api/import/status") {
+        const job = importJobStatus(url.searchParams.get("job") ?? "");
+        if (!job) return Response.json({ error: "没有这个导入任务" }, { status: 404 });
+        return Response.json({ done: job.done, copied: job.copied, total: job.total, path: job.path, kind: job.kind, error: job.error });
+      }
+
       if (request.method === "POST" && url.pathname === "/api/import") {
         let body: { path?: unknown };
         try { body = await request.json() as { path?: unknown }; }
@@ -1361,15 +1372,38 @@ try {
         }
         const name = uniqueChildName(workspaceRoot, basename(source));
         const target = join(workspaceRoot, name);
-        log(`importing ${source} -> ${name}`);
-        try {
-          await cp(source, target, { recursive: true });
-        } catch (error) {
-          rmSync(target, { recursive: true, force: true });   // 别留半份
-          return Response.json({ error: `复制失败：${errorMessage(error)}` }, { status: 500 });
-        }
-        log(`imported ${source} -> ${name}`);
-        return Response.json({ path: name, copied: true, kind: sourceIsDir ? "dir" : "file" });
+        // 复制放到后台任务里，请求立刻带任务号返回，前端轮询 /api/import/status 拿进度。
+        // 2026-09-02 Windows 实测 1500 个小文件 47 秒，一条不动的 spinner 让人以为卡死了。
+        const { entries: total, bytes } = measureTree(source);
+        const kind: "dir" | "file" = sourceIsDir ? "dir" : "file";
+        log(`importing ${source} -> ${name} (${total} entries, ${(bytes / 1048576).toFixed(0)} MB)`);
+        const job = startImportJob(total, async (setCopied) => {
+          const started = Date.now();
+          try {
+            if (platform() === "win32" && sourceIsDir) {
+              // robocopy /MT 多线程，比 Node 串行的 fs.cp 快一个量级。进度靠数目标目录。
+              await new Promise<void>((done, fail) => {
+                const child = spawn("robocopy", robocopyArgs(source, target), { stdio: "ignore", windowsHide: true });
+                const timer = setInterval(() => setCopied(countEntries(target)), 500);
+                child.on("error", (e) => { clearInterval(timer); fail(e); });
+                child.on("exit", (code) => {
+                  clearInterval(timer);
+                  robocopyOk(code) ? done() : fail(new Error(`robocopy 退出码 ${code}`));
+                });
+              });
+            } else {
+              let n = 0;
+              await cp(source, target, { recursive: true, filter: () => { setCopied(++n); return true; } });
+            }
+          } catch (error) {
+            rmSync(target, { recursive: true, force: true });   // 别留半份
+            throw new Error(`复制失败：${errorMessage(error)}`);
+          }
+          log(`imported ${source} -> ${name} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+          return { path: name, kind };
+        });
+        // 太大或碎文件太多时告诉前端：可以不走导入，直接把文件夹放进工作区目录再选。
+        return Response.json({ job: job.id, total, bytes, kind, workspace: workspaceRoot, hint: importNeedsHint(total, bytes) });
       }
 
       // 弹系统原生选择框拿一个本机路径。前端拿到后再调 /api/import 复制进工作区。

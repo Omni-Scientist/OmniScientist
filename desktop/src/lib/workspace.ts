@@ -79,14 +79,35 @@ export function cancelPick(): void {
   void fetch("/api/pick?cancel=1", { method: "POST" });
 }
 
-/** 让后端把盘上一个文件/文件夹原生复制进工作区，返回工作区内的相对路径。数据不过浏览器。 */
-export async function importIntoWorkspace(path: string): Promise<string> {
+/**
+ * 让后端把盘上一个文件/文件夹原生复制进工作区，返回工作区内的相对路径。数据不过浏览器。
+ * 复制是后端的后台任务，这里轮询进度并回调 onProgress(已复制, 总数)。
+ */
+export interface ImportStart { total: number; bytes: number; workspace: string; hint: boolean }
+
+export async function importIntoWorkspace(
+  path: string,
+  hooks: { onProgress?: (copied: number, total: number) => void; onStart?: (info: ImportStart) => void } = {},
+): Promise<string> {
+  const { onProgress, onStart } = hooks;
   const response = await fetch("/api/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
-  const payload = (await response.json().catch(() => ({}))) as { path?: string; error?: string };
-  if (!response.ok || !payload.path) throw new Error(payload.error || t("本地后端返回 {0}", response.status));
-  return payload.path;
+  const payload = (await response.json().catch(() => ({}))) as
+    { path?: string; job?: string; total?: number; bytes?: number; workspace?: string; hint?: boolean; error?: string };
+  if (!response.ok) throw new Error(payload.error || t("本地后端返回 {0}", response.status));
+  if (payload.path) return payload.path;                 // 本来就在工作区里，没复制
+  if (!payload.job) throw new Error(t("本地后端返回 {0}", response.status));
+  onStart?.({ total: payload.total ?? 0, bytes: payload.bytes ?? 0, workspace: payload.workspace ?? "", hint: Boolean(payload.hint) });
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 400));
+    const s = await fetch(`/api/import/status?job=${encodeURIComponent(payload.job)}`);
+    const st = (await s.json().catch(() => ({}))) as { done?: boolean; copied?: number; total?: number; path?: string; error?: string };
+    if (!s.ok) throw new Error(st.error || t("本地后端返回 {0}", s.status));
+    onProgress?.(st.copied ?? 0, st.total ?? payload.total ?? 0);
+    if (st.error) throw new Error(st.error);
+    if (st.done && st.path) return st.path;
+  }
 }

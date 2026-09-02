@@ -293,5 +293,7 @@ export const en: Record<string, string> = {
   "返回": "Back",
   "导入到工作区": "Import into workspace",
   "正在导入…": "Importing…",
+  "文件较多，复制会慢。也可以直接把它放进 {0} 目录里，再从「选择数据」里选。": "Many files, copying is slow. You can also put it directly into {0} and pick it from Choose data.",
+  "正在导入… {0} / {1}": "Importing… {0} / {1}",
   "点文件夹进去；选中文件或停在要导入的文件夹里": "Click a folder to enter it; pick a file, or stay inside the folder you want to import",
 };

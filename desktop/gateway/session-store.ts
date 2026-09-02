@@ -110,7 +110,13 @@ function payloadText(payload: Record<string, unknown>): string {
 }
 
 function visibleUserText(value: string): string {
-  return value.replace(/\n\n<适用规矩>[\s\S]*$/u, "").trim();
+  // 模型那份消息尾巴上挂的都要摘干净：数据目录块、规矩块、逐轮英文提醒。
+  // 新旧两种标签都认，老会话的存量 payload 还是中文标签。
+  return value
+    .replace(/\n\n<(?:数据目录|data-directory)>[\s\S]*$/u, "")
+    .replace(/\n\n<(?:适用规矩|applicable-standards)>[\s\S]*$/u, "")
+    .replace(/\n\n\[Reply in the language of the user's message[\s\S]*$/u, "")
+    .trim();
 }
 
 function compact(value: string, limit: number): string {
@@ -312,10 +318,10 @@ export class WebSessionStore {
     // 消息里，取最近 N 条的窗口正好会漏掉它，长会话上必然失手。
     const row = this.db.query(
       `SELECT payload FROM messages
-        WHERE session_id = ? AND payload LIKE '%<数据目录>%'
+        WHERE session_id = ? AND (payload LIKE '%<数据目录>%' OR payload LIKE '%<data-directory>%')
         ORDER BY id DESC LIMIT 1`,
     ).get(internalId) as { payload?: string } | null;
-    const hit = /<数据目录>([^<]*)<\/数据目录>/u.exec(row?.payload ?? "");
+    const hit = /<(?:数据目录|data-directory)>([^<]*)<\/(?:数据目录|data-directory)>/u.exec(row?.payload ?? "");
     return hit?.[1]?.trim() ?? "";
   }
 

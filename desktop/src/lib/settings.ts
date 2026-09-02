@@ -37,11 +37,25 @@ export interface ChannelInfo {
   activeModel: string;
   /** 选中的模型收不收推理档位。 */
   supportsEffort: boolean;
+  /** 收的话认哪几档。不收就是空数组。 */
+  effortLevels: string[];
   effort: string;
 }
 
-/** 推理档位。gpt-5.6 实测就这几个，没有 max，最强是 xhigh。 */
-export const EFFORTS = ["none", "low", "medium", "high", "xhigh"] as const;
+/**
+ * 推理档位规则，后端下发。
+ *
+ * 为什么不是前端自己写死一个正则：各家认的档位不是一套（OpenAI 五档、GLM 三档
+ * low/high/max），而且这一行要跟着用户正在敲的模型名实时出现或消失。唯一真值在
+ * cli/src/model.ts 的 EFFORT_RULES，前端只负责套用。
+ */
+export interface EffortRule {
+  /** 匹配模型名的正则源码。 */
+  pattern: string;
+  levels: string[];
+  fallback: string;
+  required: boolean;
+}
 
 export interface SettingsState {
   active: ProviderId;
@@ -51,6 +65,8 @@ export interface SettingsState {
   vision: ChannelInfo[];
   /** 眼睛配齐了没有。没配齐 view_image 会当场报错，不会静默瞎编。 */
   visionReady: boolean;
+  /** 哪些模型收推理档位、各认哪几档。见 EffortRule。 */
+  effortRules: EffortRule[];
   /** 每天查一次有没有新版本。关掉之后 CLI 也不查，同一个开关。 */
   updateCheck: boolean;
   /** 测试通过时回传测的是哪个模型。 */

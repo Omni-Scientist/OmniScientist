@@ -15,13 +15,21 @@ null was still returned by a real index, but prefer the ones that can be verifie
 `picks.json` is a JSON list of hit objects exactly as `search` prints them, keeping only the ones you decided
 to cite. A broad query returns off-topic hits; dropping them is your job, not the tool's.
 """
-import os, re, sys, json, argparse, urllib.parse, urllib.request
+import os, re, sys, json, argparse, urllib.parse, urllib.request, hashlib, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hostbridge as hb
 
 MAIL = "mmsci@example.org"
 UA = {"User-Agent": "omnisci/1.0 (mailto:%s)" % MAIL}
+
+
+def _file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _clean(title):
@@ -40,6 +48,10 @@ def _get(url, timeout=20):
 _OA_SELECT = "id,doi,title,publication_year,authorships,primary_location,biblio"
 
 
+def _normalise_doi(doi):
+    return re.sub(r"^https?://(?:dx\.)?doi\.org/", "", str(doi or "").strip(), flags=re.I).lower()
+
+
 def _map_oa(w):
     loc = (w.get("primary_location") or {}).get("source") or {}
     bib = w.get("biblio") or {}
@@ -54,9 +66,13 @@ def _map_oa(w):
 def by_doi(doi):
     """Free-text search is not stable across calls: the same query can return a paper one minute and not the
     next. Once you have decided to cite something, pin it by DOI so the bibliography is reproducible."""
+    doi = _normalise_doi(doi)
     qs = urllib.parse.urlencode({"mailto": MAIL, "select": _OA_SELECT})
-    w = _get("https://api.openalex.org/works/doi:%s?%s" % (doi.strip(), qs))
-    return [_map_oa(w)] if w.get("title") else []
+    w = _get("https://api.openalex.org/works/doi:%s?%s" % (doi, qs))
+    if w.get("title"):
+        return [_map_oa(w)]
+    item = (_get("https://api.crossref.org/works/%s" % urllib.parse.quote(doi, safe="")).get("message") or {})
+    return [_map_crossref(item)] if item.get("title") else []
 
 
 def _openalex(query, n):
@@ -64,22 +80,24 @@ def _openalex(query, n):
     return [_map_oa(w) for w in (_get("https://api.openalex.org/works?" + qs).get("results") or []) if w.get("title")]
 
 
+def _map_crossref(w):
+    title = (w.get("title") or [""])[0]
+    year = ((w.get("issued") or {}).get("date-parts") or [[None]])[0][0]
+    authors = [" ".join(x for x in (a.get("given"), a.get("family")) if x)
+               for a in (w.get("author") or [])[:10]]
+    doi = _normalise_doi(w.get("DOI")) or None
+    return {"title": _clean(title), "year": year, "authors": [a for a in authors if a],
+            "venue": (w.get("container-title") or [""])[0], "volume": w.get("volume"),
+            "pages": w.get("page"), "doi": doi,
+            "url": ("https://doi.org/" + doi) if doi else None, "source": "crossref"}
+
+
 def _crossref(query, n):
     qs = urllib.parse.urlencode({"query.bibliographic": query, "rows": n, "mailto": MAIL,
                                  "select": "DOI,title,author,container-title,issued,volume,page"})
-    out = []
-    for w in ((_get("https://api.crossref.org/works?" + qs).get("message") or {}).get("items") or []):
-        title = (w.get("title") or [""])[0]
-        if not title:
-            continue
-        year = ((w.get("issued") or {}).get("date-parts") or [[None]])[0][0]
-        authors = [" ".join(x for x in (a.get("given"), a.get("family")) if x) for a in (w.get("author") or [])[:10]]
-        doi = w.get("DOI")
-        out.append({"title": _clean(title), "year": year, "authors": [a for a in authors if a],
-                    "venue": (w.get("container-title") or [""])[0], "volume": w.get("volume"),
-                    "pages": w.get("page"), "doi": doi,
-                    "url": ("https://doi.org/" + doi) if doi else None, "source": "crossref"})
-    return out
+    return [_map_crossref(w) for w in
+            ((_get("https://api.crossref.org/works?" + qs).get("message") or {}).get("items") or [])
+            if w.get("title")]
 
 
 def search(query, n):
@@ -96,7 +114,24 @@ def search(query, n):
 def write_bib(td, picks):
     p = hb.engine_module("paper")
     used, entries, keys = set(), [], []
-    for hit in picks:
+    canonical, seen_dois = [], set()
+    if not isinstance(picks, list) or not picks:
+        raise SystemExit("picks.json must be a non-empty list of search hits")
+    for picked in picks:
+        doi = _normalise_doi((picked or {}).get("doi"))
+        if not doi:
+            raise SystemExit("every cited work must have a DOI so bib can re-verify it")
+        if doi in seen_dois:
+            continue
+        resolved = by_doi(doi)
+        if not resolved:
+            raise SystemExit("DOI did not resolve through OpenAlex or Crossref: %s" % doi)
+        hit = resolved[0]
+        hit["doi"] = doi
+        canonical.append(hit)
+        seen_dois.add(doi)
+
+    for hit in canonical:
         key = p._keygen(hit, used)
         entry = p._bib_entry(key, hit)
         # BibTeX lowercases a title it is not told to protect, which turns MedMNIST into "Medmnist", AI into
@@ -108,7 +143,15 @@ def write_bib(td, picks):
         keys.append({"key": key, "title": hit.get("title"), "year": hit.get("year"), "doi": hit.get("doi")})
     path = os.path.join(hb.host_dir(td), "references.bib")
     open(path, "w").write("\n\n".join(entries) + "\n")
-    return {"bib": path, "n": len(keys), "keys": keys}
+    bib_sha = _file_sha256(path)
+    provenance = os.path.join(hb.host_dir(td), "references.provenance.json")
+    json.dump({"version": 1, "verified_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+               "bib_sha256": bib_sha,
+               "entries": [{"doi": h["doi"], "title": h["title"], "source": h.get("source"),
+                            "url": h.get("url")} for h in canonical]},
+              open(provenance, "w"), indent=2, ensure_ascii=False)
+    return {"bib": path, "provenance": provenance, "n": len(keys), "keys": keys,
+            "bib_sha256": bib_sha, "provenance_sha256": _file_sha256(provenance)}
 
 
 def main():

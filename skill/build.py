@@ -30,6 +30,7 @@ REQUIRED = [
     "bin/hostbridge.py", "bin/evidence_cli.py", "bin/gate_cli.py",
     "bin/lit_cli.py", "bin/paper_cli.py", "bin/case_cli.py",
     "bin/vendor/evidence.py", "bin/vendor/paper.py", "bin/vendor/agentic.py",
+    "bin/vendor/paperlint.py", "bin/vendor/paradigms.py",
 ]
 
 

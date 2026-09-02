@@ -680,6 +680,8 @@ export function ChatPane({
   const [pickMenu, setPickMenu] = useState(false);
   /** dialog = 系统选择框开着等用户选；copy = 后端正在往工作区复制。 */
   const [pickPhase, setPickPhase] = useState<null | "dialog" | "copy">(null);
+  const [importProgress, setImportProgress] = useState<{ copied: number; total: number } | null>(null);
+  const [importHint, setImportHint] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -755,7 +757,13 @@ export function ChatPane({
       }
       if (picked === null) return;   // 用户在面板里点了取消
       setPickPhase("copy");
-      const rel = await importIntoWorkspace(picked);
+      setImportProgress(null);
+      setImportHint(null);
+      const rel = await importIntoWorkspace(picked, {
+        onProgress: (copied, total) => setImportProgress({ copied, total }),
+        // 文件太多或太大：复制会慢，直接告诉用户可以把文件夹放进工作区目录再选，跳过复制
+        onStart: (info) => setImportHint(info.hint ? info.workspace : null),
+      });
       setDataPath(rel);
       textareaRef.current?.focus();
     } catch (e) {
@@ -764,6 +772,8 @@ export function ChatPane({
       setImportError(e instanceof Error ? e.message : String(e));
     } finally {
       setPickPhase(null);
+      setImportProgress(null);
+      setImportHint(null);
     }
   }
 
@@ -851,7 +861,10 @@ export function ChatPane({
                   {pickPhase === "dialog"
                     ? t("在系统弹出的窗口里选…")
                     : pickPhase === "copy"
-                      ? t("正在导入…")
+                      ? (importProgress && importProgress.total > 0
+                        ? t("正在导入… {0} / {1}", importProgress.copied, importProgress.total)
+                        : t("正在导入…"))
+                        + (importHint ? " " + t("文件较多，复制会慢。也可以直接把它放进 {0} 目录里，再从「选择数据」里选。", importHint) : "")
                       : t("导入失败 {0}", importError ?? "")}
                 </span>
                 {pickPhase === "dialog" && !tauriDialog() ? (

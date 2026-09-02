@@ -8,21 +8,43 @@ section, expands its ORDERED paragraph jobs (one job -> one paragraph, grounded 
 where the spec says) and joins them with blank lines -> guaranteed multi-paragraph, on-length, structured prose.
 scrub/trim are injected (from agentic) so the failed/demoted path is removed deterministically, ONCE, and empty
 returns are retried. Figures are interleaved by the caller into the section whose spec has floats == 'lead'."""
+import os
 import re
 import paper_specs
+
+
+_GUNK_VERBS = ("indicated|showed|revealed|suggested|confirmed|demonstrated|yielded|returned|gave|"
+               "was|were|remained|reached|exceeded|dropped|rose|held")
+
+
+def _degunk(before, after):
+    """Repair the GRAMMAR WRECKAGE the stat-strippers leave behind (audit item 3): deleting 'z=-6.83' from
+    'A z=-6.83 indicated ...' left the dangling 'A indicated ...'. Only wreckage the stripping CREATED is
+    touched -- a phrase like 'the indicated region' that already existed in the input is never rewritten."""
+    def _subj(m):
+        if m.group(0) in before:                             # author's own phrasing (e.g. participle) -> keep
+            return m.group(0)
+        head = "The analysis" if m.group(1)[0].isupper() else "the analysis"
+        return head + " " + m.group(2)
+    after = re.sub(r"\b([Aa]n?|[Tt]he)\s+(%s)\b" % _GUNK_VERBS, _subj, after)
+    if "of n " not in before:
+        after = re.sub(r"\bof n\s+(?=[a-z]+s\b)", "of the ", after)   # 'of n events' after the count was stripped
+    return re.sub(r"\s{2,}", " ", after).strip()
 
 
 def _strip_stats(s):
     """Remove TEST STATISTICS from material fed to the abstract -- z/t/F/r = ... stats and p-values -- while keeping the
     effect numbers (AUC 0.73, drop 0.15) and prose. This is INPUT trimming (the abstract should never be handed a
     p-value), not an output guard. e.g. '(AUC 0.73 to 0.58, DeLong z=4.333, p=1.47e-5)' -> '(AUC 0.73 to 0.58)'."""
-    s = str(s or "")
-    s = re.sub(r",?\s*(?:[A-Z][A-Za-z-]+\s+){0,2}(?:test\s+)?[zZtTFrR]\s*=\s*-?\d[\d.eE+-]*", "", s)   # ', DeLong z=4.333'
+    s = _s0 = str(s or "")
+    # (?<![A-Za-z]): without it the single-letter stat name matches the LAST LETTER OF A WORD, so 'weight=2'
+    # became 'weigh' and 'power=0.8' became 'powe'.
+    s = re.sub(r",?\s*(?:[A-Z][A-Za-z-]+\s+){0,2}(?:test\s+)?(?<![A-Za-z])[zZtTFrR]\s*=\s*-?\d[\d.eE+-]*", "", s)   # ', DeLong z=4.333'
     s = re.sub(r",?\s*\bp\s*[=<>]{1,2}\s*\d[\d.eE+-]*", "", s)                                          # ', p=1.47e-5' 'p<0.001'
     s = re.sub(r"\(\s*[,;]?\s*\)", "", s)                                                                # empty () left behind
     s = re.sub(r"\s+([,.;)])", r"\1", s)
     s = re.sub(r",\s*\)", ")", s)
-    return re.sub(r"\s{2,}", " ", s).strip()
+    return _degunk(str(_s0), re.sub(r"\s{2,}", " ", s).strip())
 
 
 def _scrub_abstract(s):
@@ -30,15 +52,20 @@ def _scrub_abstract(s):
     instruction (sonnet writes 0, but glm/minimax dump 31/72 numbers). Deterministically delete statistical FILLER --
     p-values / test stats (via _strip_stats), confidence intervals, n=, x/y counts, FDR, percentages -- while leaving
     effect-size numbers and prose. This is the output guard _strip_stats explicitly is NOT."""
+    _s0 = str(s or "")
     s = _strip_stats(s)                                                                       # p / z=t=F=r=
-    s = re.sub(r",?\s*(?:95\s*%?\s*)?(?:CI|confidence interval)\s*[:=]?\s*[\d.eE+\-– ,to]+", "", s, flags=re.I)  # 95% CI 2.25-4.77
+    # \b around the name and a REQUIRED leading digit. Without them, case-insensitive 'CI' matched the 'ci'
+    # INSIDE a word and the old trailing class (which contained e/t/o/space) then ate the letters after it:
+    # 'species'->'spes', 'efficiency'->'effincy', 'coefficient'->'coeffint', 'ancient society'->'annt soy'.
+    s = re.sub(r",?\s*(?:95\s*%?\s*)?\b(?:CI|confidence interval)\b\s*[:=]?\s*[-−]?\d[\d.eE+-]*"
+               r"(?:\s*(?:,|to|-|–|−)\s*[-−]?\d[\d.eE+-]*)*", "", s, flags=re.I)   # 95% CI 2.25-4.77 / CI: 0.1 to 0.9
     s = re.sub(r"\s*[\(（]\s*\d+\s*/\s*\d+[^)）]*[\)）]", "", s)                   # (26/750, ...)
     s = re.sub(r",?\s*\b[nN]\s*=\s*\d[\d,]*", "", s)                                           # n=302
     s = re.sub(r",?\s*\bFDR\s+p[^,.;]*", "", s, flags=re.I)                                    # FDR p=0.34
     s = re.sub(r"\s*[\(（]\s*[,;]?\s*[\)）]", "", s)                                   # empty () left behind
     s = re.sub(r"\s+([,.;)）])", r"\1", s)
     s = re.sub(r",\s*\)", ")", s)
-    return re.sub(r"\s{2,}", " ", s).strip()
+    return _degunk(str(_s0), re.sub(r"\s{2,}", " ", s).strip())
 
 
 def _prose_only(s):
@@ -47,8 +74,13 @@ def _prose_only(s):
     rho=-0.500, rho=0.732...'; minimax) then copies that 25-number list verbatim into the abstract. The MAIN-FINDING
     beat is a positive CLAIM in words -- the numbers live in Results -- so strip effect-DETAIL numbers here (the
     headline number, if any, comes from STUDY FACTS and rule-2 keeps at most two)."""
-    s = _strip_stats(str(s or ""))
-    s = re.sub(r",?\s*(?:partial\s+)?(?:ρ|rho|σ|sigma|α|alpha|[rR])\s*[-=]?\s*[-−]?\d[\d.eE+/·-]*", "", s)   # rho=-0.500, sigma -0.812, alpha=0.05/36 (= or bare-space value)
+    _s0 = str(s or "")
+    s = _strip_stats(_s0)
+    # Spelled-out names keep the bare-space form; the single letter r/R does NOT. Without the boundaries a bare
+    # 'r' matched inside a word and the bare-space value ate the next number: 'for 3 species'->'fo species',
+    # 'sector 5 was excluded'->'secto was excluded'.
+    s = re.sub(r",?\s*(?:partial\s+)?(?<![A-Za-z])(?:ρ|rho|σ|sigma|α|alpha)(?![A-Za-z])\s*[-=]?\s*[-−]?\d[\d.eE+/·-]*", "", s)   # rho=-0.500, sigma -0.812, alpha=0.05/36
+    s = re.sub(r",?\s*(?:partial\s+)?(?<![A-Za-z])[rR]\s*=\s*[-−]?\d[\d.eE+/·-]*", "", s)                   # r=0.732 (explicit '=' only)
     s = re.sub(r"\b\d+\s*/\s*\d+\b", "", s)                                                    # 25/36
     s = re.sub(r"(?<![A-Za-z\d/])[-−]?\d+(?:\.\d+)?\s*%", "", s)                               # bare percentages 3.47%
     s = re.sub(r"(?<![A-Za-z\d/=.])[-−]?\d+(?:\.\d+)?(?![A-Za-z\d/%])", "", s)                 # remaining standalone numbers INCL negatives (-0.61) -- lookbehind no longer excludes '-'
@@ -58,7 +90,7 @@ def _prose_only(s):
     s = re.sub(r"\s*[\(（]\s*[-–—:,;.…]*\s*[\)）]", "", s)                      # empty () / (.) / (CI -) / (..) left behind
     s = re.sub(r"\s+([,.;)）])", r"\1", s)
     s = re.sub(r"[（(]\s*[,;]\s*", "(", s)
-    return re.sub(r"\s{2,}", " ", s).strip()
+    return _degunk(_s0, re.sub(r"\s{2,}", " ", s).strip())
 
 
 def grounding(C, exp, idea, scrub, demoted, thesis=None, section="", lead=False):
@@ -96,7 +128,9 @@ def grounding(C, exp, idea, scrub, demoted, thesis=None, section="", lead=False)
     b_result = "RESULT SUMMARY: " + scrub(str(exp.get("result_statement", "")), demoted)[:1200]
     b_method = ("METHOD -- describe ONLY what is stated here, with its defining equations + exact window/parameter "
                 "values (if a step is NOT here, it was NOT done): " + str(exp.get("method_summary", "")).strip())
-    b_quant = "QUANTITIES TO REPORT VERBATIM (exact numerals, incl. the sample size): " + json.dumps(kn)[:900]
+    b_quant = ("QUANTITIES AVAILABLE (exact numerals; report AT MOST the 3 most decisive per paragraph, "
+               "verbatim -- the full set belongs in the results table and figures, never in one prose wall): "
+               + json.dumps(kn)[:900])
     b_peranalysis = ("PER-ANALYSIS NUMBERS + SAMPLE (state each analysis's decisive numbers AND which sample subset it "
                      "used, lead first): " + findings[:2400])
     # the old monolithic FAITHFULNESS block was appended to EVERY section and itself LICENSED hedging everywhere ("this
@@ -119,6 +153,13 @@ def grounding(C, exp, idea, scrub, demoted, thesis=None, section="", lead=False)
                "construction and its stability across alternative draws are not established here -- invent no sampling "
                "procedure, seed, or stratification. Frame each out-of-scope item as a bound on scope, not doubt about "
                "the finding.")
+    b_density = ("NUMBER DENSITY (hard rule): at most THREE result numbers per paragraph of prose -- lead with the "
+                 "decisive one; the full set lives in the results table and the figures (point to them via \\ref). "
+                 "Never write a paragraph that is a wall of statistics.")
+    b_mathnot = ("NOTATION: write mathematics as mathematics -- $\\hat{a}$ never a_hat, $\\sigma$ never 'sigma', "
+                 "$R^2$ never R-squared, $7.4\\times10^{-6}$ never 7.41e-06; code-style variable names never appear "
+                 "verbatim in prose. A display equation must FIT ONE COLUMN: never enumerate more than 3 formulas "
+                 "inside one set/line -- list many forms in prose or a gathered environment with line breaks.")
 
     nm = (section or "").lower()
     if "abstract" in nm:                                # the ABSTRACT gets a TINY context: subject + the stat-stripped main
@@ -133,9 +174,10 @@ def grounding(C, exp, idea, scrub, demoted, thesis=None, section="", lead=False)
     is_limit = "limitation" in nm
     parts = [b_subject]
     if is_method:                                       # describe the REAL method + report numbers, faithfully
-        parts += [b_method, b_quant, b_faith_method]
+        parts += [b_method, b_quant, b_faith_method, b_mathnot, b_density]
     elif is_results:                                    # report the exact numbers ONCE, with method-faithfulness + one honesty line
-        parts += ([b_thesis_frame] if b_thesis_frame else []) + [b_lead, b_quant, b_peranalysis, b_faith_method, b_honesty1]
+        parts += ([b_thesis_frame] if b_thesis_frame else []) + [b_lead, b_quant, b_peranalysis, b_faith_method,
+                                                                 b_honesty1, b_mathnot, b_density]
     elif is_disc:                                       # INTERPRET only: NO number re-report (kills Results/Disc repetition), NO caveat wall
         parts += ([b_thesis_frame] if b_thesis_frame else []) + [b_rq, b_lead, b_honesty1,
                   "DISCUSSION -- interpret the finding, offer alternative explanations, state boundary conditions, and "
@@ -210,23 +252,56 @@ def _results_table(chat, model, C, exp, demoted):
         gset.update(_nums(nu))
     facts = "\n".join("%s | %s" % (n, nu[:180]) for n, nu in rows)
     prompt = ("You are " + str(C.get("role", "a researcher")) + ". Lay out the key quantitative results below as ONE "
-              "compact, publication-quality LaTeX table that FITS the text width: a single \\begin{table}[t] ... "
-              "\\end{table} with a \\small tabular that compares the analyses/conditions and their decisive metrics. Use "
-              "ONLY numbers that appear below, verbatim; invent NO numbers and add no column you cannot fill from below. "
-              "Keep it NARROW: at most 3-4 columns, short abbreviated headers, and keep each cell short (it must not run "
-              "off the page). Give a one-line \\caption and \\label{tab:results}. Keep the most informative 4 to 8 rows. "
-              "Output ONLY the LaTeX table.\n\nRESULTS:\n" + facts[:1900])
-    for _ in range(3):                                     # retry: a transient blank must not lose the table
-        t = (chat(prompt, model, 1100) or "").strip()
+              "clean, publication-quality LaTeX table: a single \\begin{table}[t] ... \\end{table} with a \\small "
+              "booktabs tabular (\\toprule/\\midrule/\\bottomrule, NO vertical rules). Use ONLY numbers that appear "
+              "below, verbatim; invent NO numbers and add no column you cannot fill from below.\n"
+              "TABLE RULES (violations are rejected):\n"
+              "- one TYPE per column: a column is either short text labels or one metric in one unit, never a mix;\n"
+              "- numeric columns right-aligned with a UNIFORM number of decimals down the column;\n"
+              "- NO plus-minus values, NO parenthetical annotations (std/CI/notes) inside cells, NO slash-composites "
+              "like 1.2/3.4, NO empty cells (drop the column instead);\n"
+              "- at most 6 columns and 4-8 rows: keep the decisive metrics only, uncertainty stays in the prose;\n"
+              "- short Title-case headers; short row labels (no code-ish names).\n"
+              "Give a one-line \\caption and \\label{tab:results}. Output ONLY the LaTeX table.\n\nRESULTS:\n"
+              + facts[:1900])
+    why = ""
+    for _ in range(5):                                     # 5 tries: flash intermittently returns EMPTY output
+        p = (prompt if not why else                        # (server-side nondeterminism, seen live) and each blank
+             prompt + "\n\nYour previous table was REJECTED because: " + why + ". Produce it again fixing exactly that.")
+        t = (chat(p, model, 1100) or "").strip()
         t = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", t).strip()
+        if not t:
+            why = "you returned EMPTY output -- return the complete LaTeX table this time"
+            continue
         if "\\begin{tabular}" not in t or "\\end{table}" not in t:
+            why = "it was not a single complete \\begin{table}...\\end{table}"
             continue
-        tnums = _nums(t)
-        if tnums and sum(1 for n in tnums if n in gset) < 0.8 * len(tnums):   # >20% of the table's numbers invented -> reject
+        if re.search(r"[^\x00-\x7f]", t):
+            why = "it contained non-ASCII characters (write every symbol in math, e.g. $\\eta^2$)"
             continue
-        if "\\resizebox" not in t and "tabular*" not in t:   # deterministic: scale the tabular to fit the text width (no overflow)
-            t = t.replace("\\begin{tabular}", "\\resizebox{\\linewidth}{!}{%\n\\begin{tabular}", 1)
-            t = re.sub(r"\\end\{tabular\}(?!.*\\end\{tabular\})", "\\\\end{tabular}}", t, flags=re.S)
+        # every CELL number must be a real result: strip the caption, label and colspec first (incidental digits), then
+        # demand 100% -- the old 80% slack let one altered cell through in any table with five or more numbers.
+        _cells = re.sub(r"\\caption\{(?:[^{}]|\{[^{}]*\})*\}|\\label\{[^}]*\}|\\begin\{tabular\}\{(?:[^{}]|\{[^{}]*\})*\}"
+                        r"|\\(?:multicolumn|multirow)\{\d+\}|\\cmidrule(?:\([^)]*\))?\{[^}]*\}", " ", t)
+        _cells = re.sub(r"(?:\\times\s*)?10\s*\^\s*\{?[-+]?\d+\}?", " ", _cells)   # powers of ten are notation
+        # the FIRST column holds row labels ('Top-10', 'Layer 12', '2019 season'): digits there are names, not results
+        _cells = " ".join(" ".join(r.split("&")[1:]) for r in re.split(r"\\\\", _cells))
+        bad = [n for n in _nums(_cells) if n not in gset]
+        if bad:
+            why = "it contained numbers that are not in the RESULTS given to you: " + ", ".join(bad[:5])
+            continue
+        cells = re.sub(r"\\caption\{(?:[^{}]|\{[^{}]*\})*\}", "", t)          # nesting-aware caption strip
+        m = re.search(r"\\begin\{tabular\}\{([^}]*)\}", t)
+        spec = re.sub(r"[>@!]\{[^{}]*\}", "", m.group(1)) if m else ""        # drop colspec decorations before counting
+        ncols = len(re.findall(r"[lcrS]|p\{[^}]*\}", spec))
+        why = ("it used \\pm" if "\\pm" in t else "it used \\resizebox" if "\\resizebox" in t
+               else "it had more than 6 columns" if ncols > 6
+               else "it had slash-composite values like 1.2/3.4" if re.search(r"\d\s*/\s*\d", cells)
+               else "it had parenthetical annotations in cells" if re.search(r"\(\s*\d[^)]*\)", cells)
+               else "it had empty cells" if re.search(r"&\s*(?:,|-|--|)\s*(?:&|\\\\)", cells) else "")
+        if why:
+            continue                                       # the table rules, deterministically enforced
+        t = re.sub(r"\\begin\{table\}(\[[^\]]*\])?", "\\\\begin{table}[t]%WIDE\n", t, count=1)   # spans both columns (newline: the marker must not comment out same-line content)
         return t
     return ""
 
@@ -247,7 +322,12 @@ def write_section(chat, model, C, spec, ground, catalog, running, scrub, trim, d
                "support the point; a methods/results paragraph cites where a method or claim rests on prior work. Only "
                "cite where the reference truly supports the statement, but do not under-cite a paragraph that reviews "
                "prior work:\n" + cl)
-              if (spec.get("cite") and cl) else "\nUse no \\cite in this paragraph.")
+              if (spec.get("cite") and cl) else
+              (("\nCite prior work with \\cite{key} (EXACT keys from this list) WHERE a method, dataset or claim "
+                "genuinely rests on it -- one or two citations per paragraph where warranted, none where not:\n" + cl)
+               if cl else ""))
+        # ^ the old else-branch ORDERED 'Use no \cite' -- so in venue styles where only the Introduction had
+        #   cite=True, the shipped References list collapsed to 4-8 entries while 40 sat unused in the .bib.
         # the limitations/data-quality paragraph is the ONE place scope caveats belong -- do not gag it with the
         # global "no hedging" rule (that would produce a toothless Limitations); everywhere else stays confident.
         is_lim = "limitation" in job.lower()
@@ -296,10 +376,13 @@ def _dedup(out):
         for pi, para in enumerate(para_list):
             keep = []
             for si, s in enumerate(re.split(r"(?<=[.;])\s+", para)):
-                w = set(re.findall(r"[a-z]{4,}", s.lower()))
+                # numbers ride along as '#'-tokens and must match EXACTLY: 'accuracy from 0.81 to 0.79' after
+                # 'from 0.81 to 0.64' is a second result, not a restatement (the word-only set deleted it).
+                w = set(re.findall(r"[a-z]{4,}", s.lower())) | set("#" + n for n in _nums(s))
                 total += 1
                 is_first = (pi == 0 and si == 0)               # never drop the section's own lead sentence
                 if (not is_first) and len(w) >= 6 and any(p and len(w & p) >= 0.7 * len(w | p)
+                                                          and {x for x in w if x[0] == "#"} == {x for x in p if x[0] == "#"}
                                                           for p in (seen + sec_seen)):
                     dropped += 1
                     continue                                   # near-duplicate of an earlier sentence -> drop
@@ -311,7 +394,7 @@ def _dedup(out):
         if total and dropped > 0.35 * total:                   # over-match safeguard: keep the section as written
             for para in para_list:                             # still register its sentences so later sections dedup vs it
                 for s in re.split(r"(?<=[.;])\s+", para):
-                    w = set(re.findall(r"[a-z]{4,}", s.lower()))
+                    w = set(re.findall(r"[a-z]{4,}", s.lower())) | set("#" + n for n in _nums(s))
                     if len(w) >= 6:
                         seen.append(w)
             continue
@@ -559,7 +642,14 @@ def write_paper(chat, model, C, exp, idea, catalog, scrub, trim, demoted, style,
                    + "; ".join("Figure~\\ref{%s} = %s" % (lab, str(cap or "").replace("\n", " ")[:90])
                                for _f, lab, cap in figmap))
     out = {"_order": list(spec["order"]), "_style": style}
-    lead_section, running, lead_extra = None, "", ""
+    lead_section, lead_extra = None, ""
+    # SECTION DUTY TABLE: with parallel writing there is no running context to stop two sections restating the
+    # same result, so the anti-repetition contract moves to DESIGN TIME -- one static line per section built
+    # from its outline's first job. Generic (comes from the style spec), zero extra LLM calls; the _dedup pass
+    # stays as the runtime backstop.
+    duty = ("SECTION DUTIES (each section owns its lane; do NOT restate another section's content): " + "; ".join(
+        "%s = %s" % (n, str(spec["sections"][n]["outline"][0])[:70]) for n in spec["order"]))
+    jobs = []                                          # (name, s, extra, is_intro, is_lead) resolved up front
     for name in spec["order"]:
         s = spec["sections"][name]
         is_lead = s.get("floats") == "lead"
@@ -570,15 +660,49 @@ def write_paper(chat, model, C, exp, idea, catalog, scrub, trim, demoted, style,
         # every paragraph made the model echo the same scope/defensive phrases everywhere ("reads like AI self-
         # protection"). Other sections stay on-thesis via the thesis block already in their grounding.
         want_narr = is_lead or ("discussion" in name.lower())
-        extra = "\n".join(x for x in (narr if want_narr else "", fignote if is_lead else "") if x)
+        extra = "\n".join(x for x in (narr if want_narr else "", fignote if is_lead else "", duty) if x)
         if is_lead:
             lead_extra = extra
-        if "introduc" in name.lower():                 # the Introduction is a STORYLINE (background->problem->gap->
-            body = write_intro(chat, model, C, exp, idea, thesis, style, catalog, scrub, trim, demoted, running=running)  # contribution), each beat fed only its slice
-        else:
-            body = write_section(chat, model, C, s, gfor(name, is_lead), catalog, running, scrub, trim, demoted, extra=extra)
-        out[name] = body
-        running += "\n[" + name + "] " + body[:450]
+            if figmap and len(figmap) + 1 > len(s["outline"]):
+                # the RESULTS-type section must carry one substantive paragraph PER FIGURE (plus the lead) --
+                # a 5-figure study with a 4-job outline yields orphan figures and a one-paragraph Results.
+                need = len(figmap) + 1 - len(s["outline"])
+                grow = (len(s["outline"]) + need) / max(1, len(s["outline"]))
+                s = dict(s, outline=list(s["outline"]) + [
+                    "present the next supporting analysis and its figure in depth: what the figure shows, its "
+                    "decisive numbers, and what it rules in or out"] * need,
+                    words=[int(s["words"][0] * grow), int(s["words"][1] * grow)],
+                    paras=[s["paras"][0] + need, s["paras"][1] + need])
+        jobs.append((name, s, extra, "introduc" in name.lower(), is_lead))
+
+    def _write_one(job):
+        name, s, extra, is_intro, is_lead = job
+        if is_intro:                                   # the Introduction is a STORYLINE (background->problem->gap->
+            return write_intro(chat, model, C, exp, idea, thesis, style, catalog, scrub, trim, demoted, running="")
+        return write_section(chat, model, C, s, gfor(name, is_lead), catalog, "", scrub, trim, demoted, extra=extra)
+
+    # PARALLEL section writing (2026-08-30): sections only weakly coupled via the old running context, so
+    # write them concurrently -- wall time = slowest section instead of the sum. OMNIST_SERIAL_WRITE=1 restores
+    # the serial path; ANY parallel failure falls back to serial automatically (never a crash, never a downgrade
+    # in content -- the serial path is the proven one).
+    if os.environ.get("OMNIST_SERIAL_WRITE"):
+        for job in jobs:
+            out[job[0]] = _write_one(job)
+    else:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(6, len(jobs))) as ex:
+                futs = {ex.submit(_write_one, job): job[0] for job in jobs}
+                for fut, name in futs.items():
+                    try:
+                        out[name] = fut.result()           # per-section isolation: a finished section is never
+                    except Exception as e:                 # discarded or re-billed because a sibling failed
+                        print("  [writer] section %r failed in parallel (%s) -> serial retry" % (name, type(e).__name__))
+        except Exception as e:
+            print("  [writer] parallel write unavailable (%s) -> serial" % type(e).__name__)
+        for job in jobs:                                   # serial retry ONLY for the sections still missing
+            if not str(out.get(job[0], "")).strip():
+                out[job[0]] = _write_one(job)
     out["_lead_section"] = lead_section or spec["order"][-2]
 
     # deterministic NUMBERS backstop: the Results-type lead section MUST report the lead analysis's decisive numbers.
@@ -748,13 +872,16 @@ def write_paper(chat, model, C, exp, idea, catalog, scrub, trim, demoted, style,
     # grounded-numbers check.
     out["_results_table"] = _results_table(chat, model, C, exp, demoted)
 
-    # Abstract last; 1 paragraph. Fallback to a deterministic, results-bearing abstract if the model returns a stub.
+    # Abstract last; 1 paragraph. A CONCISE BUT REAL abstract is kept. The old <90-word trip wire fired on a
+    # legitimate 6-sentence abstract and replaced it with a number-stripped concatenation of the raw findings --
+    # that is what shipped on the plant paper ('(vh -)', '( vs,', 'd=-', shouting ALL-CAPS, no numbers left).
+    # A findings dump is never an acceptable abstract, so a writer that really returns a stub is a HARD failure:
+    # stage 3 is checkpointed and replayable, and a crash is visible where a wrecked abstract is not.
     ab_body = write_abstract(chat, model, C, exp, thesis, style, gfor("abstract"), scrub, trim, demoted)
-    if len(ab_body.split()) < 90:
-        demset = set(demoted or [])
-        sup = [a for a in (exp.get("analyses") or []) if a.get("name") not in demset]
-        fb = " ".join(str(a.get("finding", "")).strip() for a in sup if str(a.get("finding", "")).strip())
-        fb = _prose_only(fb)                                # findings are number-dense; strip to prose like the normal path
-        ab_body = trim(scrub(_scrub_abstract(fb), demoted)[:1500]) or fb[:1500]   # else a reasoning model whose abstract came back empty ships a 31-number dump
+    if len(ab_body.split()) < 55:
+        ab_body = write_abstract(chat, model, C, exp, thesis, style, gfor("abstract"), scrub, trim, demoted)
+    if len(ab_body.split()) < 55:
+        raise RuntimeError("abstract writer returned a %d-word stub twice; refusing to ship a findings dump as "
+                           "the paper's abstract" % len(ab_body.split()))
     out["ABSTRACT"] = ab_body
     return _dedup(out)

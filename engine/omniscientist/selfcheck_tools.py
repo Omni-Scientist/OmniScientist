@@ -5,7 +5,7 @@ look_at_* / analyze_* tool, asserting the output is NON-DEGENERATE -- this catch
 (e.g. the multichannel-signal orientation bug that rendered a 3x6000 waveform as a 3-point polyline). The VLM is
 stubbed so the check is free; it exercises the load + render + native-analysis path, which is where breakage hides.
 
-    python3 engine/omniscientist/selfcheck_tools.py   # check all modalities against the bundled examples
+    python3 scripts/selfcheck_tools.py            # check all modalities against the bundled examples
 Exit code 0 = all tools healthy, 1 = at least one degenerate/broken tool.
 """
 import os, sys, re, glob, json

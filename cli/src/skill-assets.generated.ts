@@ -12,9 +12,11 @@ import s7 from "../skills/omnisci/bin/vendor/agentic.py" with { type: "file" };
 import s8 from "../skills/omnisci/bin/vendor/evidence.py" with { type: "file" };
 import s9 from "../skills/omnisci/bin/vendor/paper.py" with { type: "file" };
 import s10 from "../skills/omnisci/bin/vendor/paper_specs.py" with { type: "file" };
-import s11 from "../skills/omnisci/bin/vendor/venue_styles.py" with { type: "file" };
-import s12 from "../skills/omnisci/bin/vendor/writer.py" with { type: "file" };
-import s13 from "../skills/omnisci/requirements.txt" with { type: "file" };
+import s11 from "../skills/omnisci/bin/vendor/paperlint.py" with { type: "file" };
+import s12 from "../skills/omnisci/bin/vendor/paradigms.py" with { type: "file" };
+import s13 from "../skills/omnisci/bin/vendor/venue_styles.py" with { type: "file" };
+import s14 from "../skills/omnisci/bin/vendor/writer.py" with { type: "file" };
+import s15 from "../skills/omnisci/requirements.txt" with { type: "file" };
 
 /** skill 内的相对路径 -> 嵌入文件路径。落盘之后才可用。 */
 export const SKILL_FILES: Record<string, string> = {
@@ -29,7 +31,9 @@ export const SKILL_FILES: Record<string, string> = {
   "bin/vendor/evidence.py": s8,
   "bin/vendor/paper.py": s9,
   "bin/vendor/paper_specs.py": s10,
-  "bin/vendor/venue_styles.py": s11,
-  "bin/vendor/writer.py": s12,
-  "requirements.txt": s13,
+  "bin/vendor/paperlint.py": s11,
+  "bin/vendor/paradigms.py": s12,
+  "bin/vendor/venue_styles.py": s13,
+  "bin/vendor/writer.py": s14,
+  "requirements.txt": s15,
 };

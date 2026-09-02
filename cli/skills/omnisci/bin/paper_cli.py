@@ -394,7 +394,19 @@ def _artifact(td, path):
             "size": os.path.getsize(path)}
 
 
-def _render_review_pages(pdf_path, review_dir, dpi=120):
+# 审阅页的渲染分辨率。
+#
+# 120 dpi 的一页 Letter 是 1020x1320。界面右侧那栏把它按 width:100% 铺满，在 Retina
+# 上（DPR 2）一个 700 CSS px 宽的面板需要 1400 设备像素，1020 是被放大着显示的，
+# 所以看起来糊。200 dpi 出 1700x2200，覆盖到 850 CSS px 宽的面板仍然是下采样。
+#
+# 同一批图 agent 也要逐页 view_image 看，所以这个数字两头都影响：视觉侧车那边多数
+# 会把长边压到 1568 再计费，120 -> 200 的实际 token 增幅约四成，不是面积那样的近三倍。
+# 正文在 120 dpi 下对视觉模型本来也偏糊，提上来两边都受益。
+REVIEW_DPI = int(os.environ.get("OMNISCI_REVIEW_DPI") or 200)
+
+
+def _render_review_pages(pdf_path, review_dir, dpi=REVIEW_DPI):
     """把编译好的 PDF 逐页渲成 PNG。交付前 agent 必须逐页看过自己写的论文，
     delivery.ts 会检查 manifest 里有没有这些页、以及是不是真的被看过，
     所以这一步失败等于交付失败，不能降级放行。
@@ -439,6 +451,36 @@ def _render_review_pages(pdf_path, review_dir, dpi=120):
         raise RuntimeError((preview.stdout + preview.stderr)[-1500:])
     return [os.path.join(review_dir, f) for f in sorted(os.listdir(review_dir))
             if f.lower().endswith(".png")]
+
+
+def _acceptance_lint(out_pdf, out_tex, work, figdir, sections):
+    """Run the engine's acceptance lint (paperlint: printed reference count, number density, tables, overfull
+    boxes, missing glyphs, figure fonts/colours, ...) on the compiled paper and report it as a LABEL on the
+    manifest. It never blocks: a red check means the paper is weaker than the house standard, not that it does
+    not exist, and the reader still gets the PDF. Until 2026-09-01 the skill had none of these checks, so a
+    paper with 5 references walked to delivery without anyone saying a word.
+
+    A crash inside the lint is recorded, not hidden: it lands in the manifest and the tool output as
+    lint.error. It is a lint bug, not a paper defect, so it must not turn a compiled paper into status=error."""
+    try:
+        pl = hb.engine_module("paperlint")
+        figs = sorted(os.path.join(figdir, f) for f in os.listdir(figdir)
+                      if f.lower().endswith(".pdf")) if os.path.isdir(figdir) else []
+        R = pl.lint_paths(out_pdf, out_tex,
+                          bib_path=os.path.join(work, "references.bib"),
+                          compile_log=os.path.join(work, "compile.log"),
+                          fig_pdfs=figs,
+                          abstract=str(sections.get("ABSTRACT") or ""),
+                          # Two checks encode research-pipeline conventions this skill has never defined:
+                          # vector_figs wants stat figures as PDF (SKILL.md's own examples are host/figures/*.png),
+                          # fig_exemplar wants a raw-data figure literally named fdata. Reporting them red on every
+                          # paper would be noise, so they are skipped until the skill adopts those conventions.
+                          skip=("vector_figs", "fig_exemplar"))
+    except Exception as exc:
+        return {"ok": False, "error": "%s: %s" % (type(exc).__name__, str(exc)[:300]), "checks": {}, "red": []}
+    checks = {k: v for k, v in R.items() if k != "_ok"}
+    red = [k for k, v in checks.items() if not v.get("ok")]
+    return {"ok": bool(R.get("_ok")), "checks": checks, "red": red, "refs_floor": pl.REFS_FLOOR}
 
 
 def compile_paper(td, sections, title, authors="Anonymous", name="paper", tectonic_path=None,
@@ -560,6 +602,8 @@ def compile_paper(td, sections, title, authors="Anonymous", name="paper", tecton
         }
         if extra.get("error"):
             manifest["error"] = extra["error"]
+        if extra.get("lint") is not None:
+            manifest["lint"] = extra["lint"]
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False, sort_keys=True)
         return dict(common, status=status, manifest=manifest_path,
@@ -573,6 +617,10 @@ def compile_paper(td, sections, title, authors="Anonymous", name="paper", tecton
                            "%s to Overleaf (New Project, Upload Project) and compile there, or install tectonic "
                            "and run this command again." % os.path.basename(zip_path))
     r = _run([tectonic, "main.tex"])
+    # keep tectonic's full output next to the build: the acceptance lint reads overfull-box and
+    # missing-glyph warnings from it, and a failed compile's log is the only thing worth reading.
+    with open(os.path.join(work, "compile.log"), "w", errors="replace") as _log:
+        _log.write((r.stdout or "") + (r.stderr or ""))
     pdf = os.path.join(work, "main.pdf")
     if r.returncode != 0 or not os.path.exists(pdf) or os.path.getsize(pdf) == 0:
         return finish("error", tectonic_returncode=r.returncode,
@@ -590,7 +638,8 @@ def compile_paper(td, sections, title, authors="Anonymous", name="paper", tecton
             return finish("error", error="PDF page rendering failed: %s" % exc)
         if not review_pages:
             return finish("error", error="PDF page rendering produced no pages")
-    return finish("ok", review_pages=review_pages, pdf=out_pdf, tex=out_tex,
+    lint = _acceptance_lint(out_pdf, out_tex, work, figdir, sections)
+    return finish("ok", review_pages=review_pages, pdf=out_pdf, tex=out_tex, lint=lint,
                   sections=[s for s in sections.get("_order", [])])
 
 

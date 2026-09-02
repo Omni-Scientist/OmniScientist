@@ -39,6 +39,10 @@ python3 $OMNISCI/case_cli.py init --dir ~/their_folder \
     --direction "Find a concrete, testable question these fields can answer, choose the method yourself, and run real code to test it."
 ```
 
+Before initialising a new case, check whether one already exists nearby: users often point at the `data/`
+subfolder of a case whose `series.json` sits one level up (list the parent of the folder they named; the CLIs
+also search upward, adopting a parent only when its `series.json` actually lists files under that folder).
+
 `inspect` never writes; run it first and tell the user what you found. `init` writes `series.json` into their
 folder and nothing else (use `--out` to build the case elsewhere and symlink the data instead). Files are
 routed to a modality by extension, and each item's label is taken from its containing folder, so
@@ -130,10 +134,17 @@ that honestly resolves nothing is acceptable, a paper that dresses a null as a d
 ### 3. Get real references
 
 ```bash
-python3 $OMNISCI/lit_cli.py search --query "<specific terms from your subject>" --n 6      # explore
+python3 $OMNISCI/lit_cli.py search --query "<specific terms from your subject>" --n 10     # explore
 python3 $OMNISCI/lit_cli.py search --doi 10.1038/s41597-022-01721-8                        # pin one you decided on
 python3 $OMNISCI/lit_cli.py bib --task <case> --picks picks.json
 ```
+
+**A paper needs at least 15 references, and 15 to 25 is the normal range.** One search does not get you there:
+its recall covers one subtopic, so run several, one per angle. For a typical study that means the dataset or
+benchmark you used, the existing methods for the task itself, the metric or statistical machinery you rely on,
+and the field each control task belongs to. Concatenate every hit you want into one `picks.json`. The compile
+step counts the references actually printed in the PDF and reports `refs_count` red below 15; that is a label,
+not a compile error, but a thin bibliography makes the related-work discussion visibly weak.
 
 `--n` is how many hits you get back in total. Free-text recall is **not stable**: the same query can return a
 paper on one call and not the next, so once you have chosen a reference, re-fetch it with `--doi` and build
@@ -145,37 +156,76 @@ rather than expecting the tool to accumulate.
 the keys **it** prints. A `\cite` to any key outside the bib is stripped at assembly, so a hallucinated key
 silently loses its citation.
 
-### 4. Write and compile
+### 4. Get the writing contract, outline, write, and compile
+
+Before drafting any prose, print the contract selected from the case's field or explicit style:
+
+```bash
+python3 $OMNISCI/paper_cli.py contract --task <case>
+```
+
+The case's resolved style is binding. If the user explicitly requests another venue style, first set the top-level
+`style` field in `series.json` to `earth_space`, `cs_ml`, `biomed`, `physics`, or `chem`, then rerun the command.
+Use `contract --style ...` only to preview an alternative; compilation rejects a `_style` that disagrees with the case.
+
+Treat that JSON as the writing schema, not as optional advice:
+
+- Copy `_style`, `_order`, and `_lead_section` exactly into `sections.json`. Do not rename a canonical section
+  (for example, do not substitute `Analysis` for `Methods`) or omit the concluding section.
+- For every section, map each `ordered_paragraph_jobs` entry to the recorded facts and real references it needs,
+  then expand the jobs **in order**. Emit one substantive paragraph per job and separate adjacent paragraphs with
+  a blank line (`\n\n`). Do not print the job labels or the outline itself in the paper.
+- A section whose contract sets `citations` to `true` must cite at least one key from the current verified
+  `references.bib`; compilation rejects missing and unknown keys rather than silently producing uncited prior work.
+- Stay inside each section's `words` and `paragraphs` ranges. The Abstract is deliberately one paragraph; a body
+  section is not. Never collapse several jobs into one long paragraph and never fake compliance with one-sentence
+  fragments.
+- Preserve rhetorical roles. The headline finding belongs in the lead Results-type section; controls establish
+  boundaries, the Discussion interprets without restating all results, and Limitations bound scope without erasing
+  the supported finding.
 
 ```json
-{"_order": ["Introduction", "Data", "Analysis", "Results", "Discussion"],
+{"_style": "earth_space",
+ "_order": ["Introduction", "Data", "Methods", "Results", "Discussion", "Conclusions"],
  "_lead_section": "Results",
  "_figures": [{"file": "host/figures/f.png", "caption": "..."}],
  "_results_table": "\\begin{table}[H]\\centering ... \\end{table}",
  "ABSTRACT": "...", "Introduction": "...", "Results": "..."}
 ```
 
-Section order follows the field: Introduction / Data / Analysis / Results / Discussion for observational
-science, Introduction / Related Work / Method / Experiments / Conclusion for ML, Results before Methods for
-biology. Figures interleave into `_lead_section` and are numbered in the order you list them. Write your own
+Figures interleave into `_lead_section` and are numbered in the order you list them. Write your own
 `Figure~\ref{fig:fN}` **inside `_lead_section`**: a reference from any other section does not count, and the
-fallback sentence "These results are summarized in Figure~N" gets appended anyway.
+writing-contract gate rejects a listed figure that is not referenced there.
 
 **Tables go in `_results_table` and nowhere else.** It is inserted as raw LaTeX after the lead section's first
 paragraph. A `tabular` written into ordinary section prose gets its `&` and `_` escaped and will not compile.
+`_results_table` must contain exactly one complete `table` environment and no document or section commands.
 
 Your prose is sanitised on the way in: `_ % & #` are escaped, a bare `^` becomes a literal, em-dashes are
-removed, and **everything after an unpaired `$` is truncated**. So write `cm$^{-1}$`, not `cm^-1`, and check
-your math delimiters pair up.
+removed, and the writing-contract gate rejects an unpaired `$` before the sanitizer could truncate the section.
+So write `cm$^{-1}$`, not `cm^-1`, and check your math delimiters pair up. Outside supported math and list
+environments, keep LaTeX to citations, references, and simple text emphasis.
+
+Hand-writing a large JSON file rarely survives the escaping; generate `sections.json` with a small python script
+and `json.dump`, then compile:
 
 ```bash
-python3 $OMNISCI/paper_cli.py compile --task <case> --sections sections.json --title "..."
+python3 $OMNISCI/paper_cli.py compile --task <case> --sections host/sections.json --title "<title>"
 ```
 
-Every compile also writes `<name>_overleaf.zip` beside the paper: the full LaTeX source, the figures and the
-bib. If tectonic is not installed the status comes back `tex_only` and **that bundle is the deliverable**; hand
-the user the zip and tell them to upload it to Overleaf (New Project, Upload Project). A compile failure
-returns the tectonic error instead of a PDF, and the bundle is still there; fix your LaTeX and run again.
+Compilation validates the writing contract before LaTeX assembly. If it reports `writing contract failed`, rewrite
+the named sections from their ordered jobs and compile again. Do not bypass the error by adding empty lines: only
+paragraph blocks with substantial prose count.
+
+A successful compile writes, under `host/`: `paper.pdf`, `paper.tex`, `paper_overleaf.zip` (source, figures and
+bib, the deliverable when tectonic is missing and the status comes back `tex_only`), `paper.manifest.json`
+(hash-bound record of inputs and outputs), one PNG per page under `paper_review/`, and `paper.lint.json`. The
+JSON it prints ends with a `lint` object, the engine's **acceptance report**: printed reference count (floor 15),
+result-number density per paragraph (at most 3), table rules, overfull boxes, missing glyphs, figure fonts and
+colours, stripper wreckage in the abstract, and more. `lint.red` lists what failed with a one-line reason each.
+Red items are labels, not a gate: the PDF is already on disk. Fix them before handing back when you can; a
+`refs_count` red means going back to `lit_cli.py`, not rewording. Every compile starts from a clean build
+directory and a failed rerun removes the prior PDF, so an old PDF can never masquerade as the new result.
 
 ### 5. Pass the gate
 
@@ -183,23 +233,27 @@ returns the tectonic error instead of a PDF, and the bundle is still there; fix 
 python3 $OMNISCI/gate_cli.py check --task <case> --tex host/paper.tex
 ```
 
-Exit 2 means one of three things. Two are about perception: some call was left pending, or a case with
-perceptual evidence has **no** completed perception at all. The rule is exactly that, at least one ingested
-call and zero pending; there is no per-member coverage requirement, and with a case of 1500 members there
-could not be. The third is an ungrounded number. Fix that **at the source**, by printing it from the analysis
-and recording again, rather than by deleting a true sentence.
+Exit 2 means one of these: a perception call was left pending, or a case with perceptual evidence has no
+completed perception at all (the rule is exactly one ingested call or more and zero pending; there is no
+per-member coverage requirement); the paper cites a key that is not in the verified bibliography, or
+`references.bib` changed after its DOI verification; the analysis ledger has no current successful run (a failed
+run never grounds numbers, and editing a script invalidates its old run, so record again); or a number in the
+prose is ungrounded. Fix an ungrounded number **at the source**, by printing it from the analysis and recording
+again, rather than by deleting a true sentence.
 
-What counts as a number: anything with two or more digits, including wavelengths, window bounds and counts,
-**and everything inside `_results_table`**, which is exactly where a re-expressed number tends to hide. Not
-checked: four-digit years, single digits, identifiers with a letter prefix (`R110104`), and anything inside a
-figure environment. Ranges written `200--1200` are read as two numbers. Percent and fraction forms of the same
-recorded value both ground, within 2 per cent, so a printed `0.091` covers a written `9.1`. Write a p-value
-exactly as your script printed it, `1.96e-08`, not re-expressed as `1.96\times10^{-8}$`.
+What counts as a number: every numeric token, including single digits, wavelengths, window bounds, counts,
+figure captions, and everything inside `_results_table`. Four-digit citation years and identifiers with a letter
+prefix (`R110104`) are not results. Ranges written `200--1200` are read as two numbers. Percent and fraction forms
+of the same recorded value both ground, within 2 per cent relative tolerance and only a tiny floating-point
+epsilon, so a printed `0.091` covers a written `9.1` but cannot cover an unrelated small value. Write a p-value
+exactly as your script printed it, `1.96e-08`, not re-expressed as `1.96\times10^{-8}`.
 
 ### 6. Hand back
 
-Read the PDF yourself before you show it. Then give the user the path, the hypothesis you tested, the decisive
-numbers, the references, and what the gate said.
+Inspect the finished PDF before showing it. Read `host/paper.manifest.json` and look at **every** image listed
+under `review_pages` with your own eyes (you are the perceiver in this harness) to catch blank pages, clipping,
+overlapping content, and broken figures. Then give the user the path, the hypothesis you tested, the decisive
+numbers, the references, what the gate said, and which lint items are still red.
 
 ## What the gate does not do
 

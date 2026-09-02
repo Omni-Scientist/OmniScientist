@@ -9,11 +9,10 @@ import { ApprovalPolicy } from "../src/approval.ts";
 import { Session } from "../src/session.ts";
 import {
   AgentLoop, MAX_TURNS, repairToolCallGaps, STOPPED_TOOL_RESULT, UNATTENDED_MAX_TURNS,
-  type Presenter,
-} from "../src/loop.ts";
+  type Presenter, isTransientModelError } from "../src/loop.ts";
 import {
-  DEFAULT_EFFORT, EFFORT_LEVELS, ModelClient, PROVIDERS, quirks, REASONING_HEADROOM,
-  supportsEffort, tokenCapField,
+  DEFAULT_EFFORT, EFFORT_LEVELS, EFFORT_RULES, ModelClient, PROVIDERS, quirks, REASONING_HEADROOM,
+  effortLevelsFor, effortRuleFor, supportsEffort, tokenCapField,
 } from "../src/model.ts";
 import { BUILTIN_SKILLS_DIR, loadSkills, makeUseSkillTool } from "../src/skills.ts";
 import { defaultRegistry, makeContext, Registry, type Tool } from "../src/tools/index.ts";
@@ -174,6 +173,43 @@ describe("multimodal tool result ordering", () => {
     );
     await loop.run(messages);
     expect(call).toBe(2);
+  });
+});
+
+describe("模型瞬时错误的可见重试", () => {
+  const done = { message: { role: "assistant", content: "done" }, finishReason: "stop",
+                 usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0, cost: 0 } };
+  const named = (name: string, message: string, status?: number) => { const e = new Error(message) as Error & { status?: number }; e.name = name; if (status) e.status = status; return e; };
+
+  test("连接错误：说出来、等一下、再来一次，整场不作废", async () => {
+    // 2026-09-02 实测：64 步之后一次 APIConnectionError，整轮中断。ModelClient 故意 maxRetries: 0，
+    // 所以重试放在 loop 里，且每次都 note 出来，不是静默的。
+    let calls = 0; const notes: string[] = [];
+    const model = { async streamTurn() { calls++; if (calls === 1) throw named("APIConnectionError", "Connection error."); return done; } };
+    const presenter = { ...silentPresenter, note: (m: string) => { notes.push(m); } };
+    const loop = new AgentLoop(model as never, new Registry(), makeContext("/opt/omnisci"), new ApprovalPolicy(true), presenter as never);
+    const messages: unknown[] = [{ role: "system", content: "t" }, { role: "user", content: "go" }];
+    await loop.run(messages);
+    expect(calls).toBe(2);
+    expect(notes.some((n) => /重试/.test(n) && /APIConnectionError/.test(n))).toBe(true);
+  });
+
+  test("鉴权错误不重试，原样抛出", async () => {
+    let calls = 0;
+    const model = { async streamTurn() { calls++; throw named("AuthenticationError", "401 Incorrect API key", 401); } };
+    const loop = new AgentLoop(model as never, new Registry(), makeContext("/opt/omnisci"), new ApprovalPolicy(true), silentPresenter);
+    await expect(loop.run([{ role: "system", content: "t" }, { role: "user", content: "go" }])).rejects.toThrow(/401/);
+    expect(calls).toBe(1);
+  });
+
+  test("isTransientModelError 只认瞬时信号", () => {
+    expect(isTransientModelError(named("APIConnectionTimeoutError", "Request timed out."))).toBe(true);
+    expect(isTransientModelError(named("InternalServerError", "503", 503))).toBe(true);
+    expect(isTransientModelError(named("RateLimitError", "429", 429))).toBe(true);
+    expect(isTransientModelError(new Error("fetch failed"))).toBe(true);
+    expect(isTransientModelError(named("AuthenticationError", "401", 401))).toBe(false);
+    expect(isTransientModelError(named("BadRequestError", "400 invalid", 400))).toBe(false);
+    expect(isTransientModelError(new Error("paper_cli.py 退出码 1"))).toBe(false);
   });
 });
 
@@ -483,6 +519,30 @@ describe("推理档位", () => {
     expect(tokenCapField("claude-sonnet-5", 1200, "xhigh")).toEqual({ max_tokens: 1200 });
   });
 
+  test("视觉侧车的输出上限不认模型名：默认 8000，可用环境变量调", async () => {
+    // 以前写死 1200，DeepSeek 这类推理模型把预算想没了，正文为空（2026-09-02 实测）。
+    // 不按模型名开口子：上限是天花板不是消费，不推理的模型多给也不多花。
+    const { visionMaxTokens, emptyObservationError } = await import("../src/tools/vision.ts");
+    const saved = process.env.OMNISCI_VISION_MAX_TOKENS;
+    try {
+      delete process.env.OMNISCI_VISION_MAX_TOKENS;
+      expect(visionMaxTokens()).toBe(8000);
+      process.env.OMNISCI_VISION_MAX_TOKENS = "3000";
+      expect(visionMaxTokens()).toBe(3000);
+      process.env.OMNISCI_VISION_MAX_TOKENS = "abc";
+      expect(visionMaxTokens()).toBe(8000);
+      process.env.OMNISCI_VISION_MAX_TOKENS = "-5";
+      expect(visionMaxTokens()).toBe(8000);
+    } finally {
+      if (saved === undefined) delete process.env.OMNISCI_VISION_MAX_TOKENS; else process.env.OMNISCI_VISION_MAX_TOKENS = saved;
+    }
+    // 报错要能区分"预算被推理吃光"和"服务端空回"
+    const a = emptyObservationError("m", [{ cap: 8000, finishReason: "length", completion: 8000 }]);
+    expect(a.message).toMatch(/finish_reason=length/); expect(a.message).toMatch(/OMNISCI_VISION_MAX_TOKENS/);
+    const b = emptyObservationError("m", [{ cap: 8000, finishReason: "stop", completion: 0 }]);
+    expect(b.message).toMatch(/服务端/);
+  });
+
   test("默认档位只给 OpenAI 官方通道", async () => {
     const { setVisionResolver, visionConfig } = await import("../src/tools/vision.ts");
     const effortOf = (config: Record<string, string>) => {
@@ -506,6 +566,46 @@ describe("推理档位", () => {
     expect([...EFFORT_LEVELS]).toEqual(["none", "low", "medium", "high", "xhigh"]);
     expect(EFFORT_LEVELS).not.toContain("max");
     expect(DEFAULT_EFFORT).toBe("medium");
+  });
+
+  test("GLM 认的是另一套档位，不是 OpenAI 那五档", () => {
+    // 上游原话：always engages in thinking and cannot be disabled; use low, high, or max。
+    expect(supportsEffort("glm-5.3-flash")).toBe(true);
+    expect([...effortLevelsFor("glm-5.3-flash")]).toEqual(["low", "high", "max"]);
+    // 把 OpenAI 那几档塞给 GLM 会被上游拒，所以表里不能有它们
+    expect(effortLevelsFor("glm-5.3-flash")).not.toContain("none");
+    expect(effortLevelsFor("glm-5.3-flash")).not.toContain("medium");
+    expect(effortLevelsFor("glm-5.3-flash")).not.toContain("xhigh");
+    // 反过来 OpenAI 也没有 max
+    expect(effortLevelsFor("gpt-5.6-luna")).not.toContain("max");
+    // 不收这个字段的一律空表
+    expect([...effortLevelsFor("deepseek-v4-flash")]).toEqual([]);
+    expect([...effortLevelsFor("")]).toEqual([]);
+  });
+
+  test("GLM 是 required：不给档位它返回空串，所以装配时必须有默认", () => {
+    const glm = effortRuleFor("glm-5.3-flash");
+    expect(glm?.required).toBe(true);
+    expect(glm?.fallback).toBe("low");
+    // OpenAI 那族不是 required：自定义端点上挂个 gpt-5.x 不保证收这个字段
+    expect(effortRuleFor("gpt-5.6-luna")?.required).toBe(false);
+    expect(effortRuleFor("deepseek-v4-flash")).toBeNull();
+  });
+
+  test("规则表能发给前端：pattern 是能编回去的正则源码", () => {
+    // 设置界面按用户正在敲的模型名实时判，靠的就是这张表，不再自己写一份正则。
+    for (const rule of EFFORT_RULES) {
+      expect(() => new RegExp(rule.pattern)).not.toThrow();
+      expect(rule.levels.length).toBeGreaterThan(0);
+      expect(rule.levels).toContain(rule.fallback);
+    }
+    expect(JSON.parse(JSON.stringify(EFFORT_RULES))).toHaveLength(EFFORT_RULES.length);
+  });
+
+  test("quirks 把档位发给 GLM", () => {
+    expect(quirks("custom", "glm-5.3-flash", false, "max")).toEqual({ reasoning_effort: "max" });
+    // 带 tools 也照发：那条 none 的强制只针对 gpt-5.6
+    expect(quirks("custom", "glm-5.3-flash", true, "low")).toEqual({ reasoning_effort: "low" });
   });
 });
 
@@ -650,6 +750,61 @@ describe("感知回执绑定", () => {
     const request = buildImageRequest({ path: "tile.png", question: "新问题" }, makeContext(root));
     expect(request.question).toBe("新问题");
     expect(request.pendingCount).toBe(0);
+  });
+
+  test("工作区里放了多个数据集时，回执要绑到 case 目录的 calls 上", () => {
+    // 2026-09-01 真实踩到：工作区下有 datasets/stead_seismic、med_ct3d、histopath 三个
+    // 数据集，host/calls 在各自的 case 目录里。view_image 当时按 ctx.root 去找 calls，
+    // 找的是工作区根，那儿根本没有 host/calls，于是每次都说"这张图没有待处理的感知
+    // 请求"，回执一条也写不进去，而且是静默的，agent 只能自己猜。
+    const root = mkdtempSync("/tmp/omnisci-bind-case-");
+    const caseRel = "datasets/stead_seismic";
+    const caseRoot = `${root}/${caseRel}`;
+    mkdirSync(`${caseRoot}/host/calls`, { recursive: true });
+    mkdirSync(`${caseRoot}/host/renders`, { recursive: true });
+    const image = `${caseRoot}/host/renders/seis_0014.png`;
+    writeFileSync(image, "fixture pixels");
+    const question = "描述这条波形的到时与信噪比。";
+    const callPath = `${caseRoot}/host/calls/call_001.json`;
+    writeFileSync(callPath, JSON.stringify({
+      call_id: 1,
+      pending: [{ id: 1, image: "host/renders/seis_0014.png", question }],
+    }));
+
+    const ctx = makeContext(root, undefined, caseRel);
+    // python 那边报的就是这种 case 相对路径，以前会被解成 <工作区>/host/renders/… 然后 ENOENT
+    const request = buildImageRequest({ path: "host/renders/seis_0014.png" }, ctx);
+    expect(request.pendingCount).toBe(1);
+    expect(request.question).toBe(question);
+    // 报回模型的相对路径也要是 case 基准，模型原样传回来才不会少一层
+    expect(request.rel).toBe("host/renders/seis_0014.png");
+
+    const receipt = recordPerceptionReceipt(
+      ctx.caseRoot, image, request.question, "观察文本", "fixture", "fixture",
+    );
+    expect(receipt.matched).toBe(1);
+    const after = JSON.parse(readFileSync(callPath, "utf-8")) as { receipts?: Record<string, unknown> };
+    expect(Object.keys(after.receipts ?? {})).toEqual(["1"]);
+  });
+
+  test("工作区相对路径也认，模型常写 datasets/<名字>/host/…", () => {
+    const root = mkdtempSync("/tmp/omnisci-bind-both-");
+    const caseRel = "datasets/stead_seismic";
+    mkdirSync(`${root}/${caseRel}/host/renders`, { recursive: true });
+    writeFileSync(`${root}/${caseRel}/host/renders/seis.png`, "fixture pixels");
+    const ctx = makeContext(root, undefined, caseRel);
+    const request = buildImageRequest({ path: `${caseRel}/host/renders/seis.png` }, ctx);
+    expect(request.size).toBeGreaterThan(0);
+    expect(request.rel).toBe("host/renders/seis.png");
+  });
+
+  test("两个基准都找不到时，错误要写出试过哪些路径", () => {
+    // 以前只有一条裸 ENOENT，agent 看不出自己少了 datasets/<名字> 那一层，会原地反复改路径
+    const root = mkdtempSync("/tmp/omnisci-bind-miss-");
+    mkdirSync(`${root}/datasets/stead_seismic`, { recursive: true });
+    const ctx = makeContext(root, undefined, "datasets/stead_seismic");
+    expect(() => buildImageRequest({ path: "host/renders/none.png" }, ctx)).toThrow(/试过/);
+    expect(() => buildImageRequest({ path: "host/renders/none.png" }, ctx)).toThrow(/datasets\/stead_seismic/);
   });
 });
 
@@ -2173,6 +2328,42 @@ describe("坏 JSON 不许落盘", () => {
     expect(existsSync(join(root, "d.jsonl"))).toBe(true);
     write.run({ path: "note.txt", content: "{坏的" }, ctx);
     expect(existsSync(join(root, "note.txt"))).toBe(true);
+  });
+
+  // edit_file 一直没有这道闸，而「删掉一个字段」这种操作只会用 edit_file。
+  // 2026-09-01 实测：删掉 sections.json 的最后一个字段，前一条的逗号就成了尾逗号，
+  // 工具报成功，两步之后 paper_cli.py 才抛一条截断的 Traceback。
+  const edit = FS_TOOLS.find((t) => t.name === "edit_file")!;
+
+  test("edit_file 删掉末位字段留下尾逗号，当场拒绝且不落盘", () => {
+    const good = '{\n  "Methods": "m",\n  "Conclusions": "c"\n}\n';
+    write.run({ path: "sections.json", content: good }, ctx);
+    expect(() => edit.run({
+      path: "sections.json",
+      old_string: ',\n  "Conclusions": "c"',
+      new_string: ",",
+    }, ctx)).toThrow(/不是合法 JSON/);
+    // 原文必须原样还在，拒绝不能把文件改坏
+    expect(readFileSync(join(root, "sections.json"), "utf-8")).toBe(good);
+  });
+
+  test("edit_file 改成合法 JSON 照常放行", () => {
+    const good = '{\n  "Methods": "m",\n  "Conclusions": "c"\n}\n';
+    write.run({ path: "ok-edit.json", content: good }, ctx);
+    edit.run({
+      path: "ok-edit.json",
+      old_string: ',\n  "Conclusions": "c"',
+      new_string: "",
+    }, ctx);
+    expect(JSON.parse(readFileSync(join(root, "ok-edit.json"), "utf-8"))).toEqual({ Methods: "m" });
+  });
+
+  test("文件本来就是坏 JSON 时不拦，否则唯一的修复手段也被堵死", () => {
+    const broken = '{\n  "a": 1,\n}\n';
+    writeFileSync(join(root, "broken.json"), broken, "utf-8");
+    // 修一半，仍然不合法，但必须放行
+    edit.run({ path: "broken.json", old_string: '"a": 1,', new_string: '"a": 1, "b":' }, ctx);
+    expect(readFileSync(join(root, "broken.json"), "utf-8")).toContain('"b":');
   });
 
   test("空内容放行（那是清空的意思）", () => {

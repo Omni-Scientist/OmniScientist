@@ -293,5 +293,7 @@ export const es: Record<string, string> = {
   "返回": "Volver",
   "导入到工作区": "Importar al espacio de trabajo",
   "正在导入…": "Importando…",
+  "正在导入… {0} / {1}": "Importando… {0} / {1}",
+  "文件较多，复制会慢。也可以直接把它放进 {0} 目录里，再从「选择数据」里选。": "Muchos archivos, la copia es lenta. También puede colocarlo directamente en {0} y elegirlo en «Elegir datos».",
   "点文件夹进去；选中文件或停在要导入的文件夹里": "Haz clic en una carpeta para entrar; elige un archivo o quédate en la carpeta que quieras importar",
 };

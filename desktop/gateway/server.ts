@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { caseHint as caseHintFor, normalizeDataPath as normalizeDataPathFor, snapToCase } from "./case-hint.ts";
 
 import { ApprovalPolicy } from "../../cli/src/approval.ts";
 import { loadGuardConfig } from "../../cli/src/guard.ts";
@@ -11,6 +12,7 @@ import { ModelClient } from "../../cli/src/model.ts";
 import { Session } from "../../cli/src/session.ts";
 import { loadSkills, makeUseSkillTool, skillsPromptBlock, type Skill } from "../../cli/src/skills.ts";
 import { buildSystemPrompt, OMNI_HOME } from "../../cli/src/soul.ts";
+import { classifyRunError } from "./error-message.ts";
 import { StandardsEngine } from "../../cli/src/standards.ts";
 import { makeExploreTool } from "../../cli/src/subagent.ts";
 import { defaultRegistry, makeContext, type Registry } from "../../cli/src/tools/index.ts";
@@ -19,7 +21,7 @@ import { ensureManagedToolsOnPath } from "../../cli/src/interpreters.ts";
 import { gatherSignals } from "../../cli/src/triggers.ts";
 import { discoverArtifacts, type ArtifactFile } from "./artifacts.ts";
 import { runOutcome } from "./run-outcome.ts";
-import { currentModelConfig, currentVisionConfig, type ModelConfig } from "./model-config.ts";
+import { activeProvider, currentModelConfig, currentVisionConfig, type ModelConfig } from "./model-config.ts";
 import { WebSessionStore } from "./session-store.ts";
 import { hydrateToolOutputs, sanitizeToolOutput } from "./tool-output.ts";
 import type {
@@ -373,7 +375,7 @@ async function createRuntime(preferredId?: string): Promise<WebRuntime> {
     injected: new Set(),
     active: false,
     artifactFiles: new Map(),
-    dataPath: stored?.dataPath ?? "",
+    dataPath: snapToCase(WORKSPACE_ROOT, normalizeDataPathFor(WORKSPACE_ROOT, stored?.dataPath ?? "")),
   };
   runtimes.set(id, runtime);
   hydrateToolOutputs(
@@ -587,17 +589,24 @@ async function runMessage(runtime: WebRuntime, userText: string, emit: Emit): Pr
   // 选中的数据目录只进模型看的那份，不进用户那条消息：它是界面上的一个选择，
   // 不是用户打的字。每轮都带一次，几十个 token 换掉"模型跑着跑着忘了 case 在哪"。
   if (runtime.dataPath) {
-    modelContent = `${modelContent}\n\n<数据目录>${runtime.dataPath}</数据目录>\n` +
-      `这一轮的 case 根目录就是它：series.json 在里面，omnisci_record / compile_paper 会以它为 --task，` +
-      `产物写在 ${runtime.dataPath}/host 下。`;
+    modelContent = `${modelContent}\n\n<data-directory>${runtime.dataPath}</data-directory>\n${caseHintFor(WORKSPACE_ROOT, runtime.dataPath)}`;
   }
   if (fresh.length) {
-    modelContent = `${modelContent}\n\n<适用规矩>\n${runtime.standards.asPromptBlock(fresh)}</适用规矩>`;
+    modelContent = `${modelContent}\n\n<applicable-standards>\n${runtime.standards.asPromptBlock(fresh)}</applicable-standards>`;
     for (const item of fresh) runtime.injected.add(item.standard.name);
     runtime.session.recordStandards(
       fresh.map((item) => [item.standard.name, item.reason] as [string, string]),
     );
   }
+
+  // 防漂移：每轮都在用户消息末尾提醒一次回复语言。系统提示里那条规则一个人扛不住几十轮中文
+  // 工具返回的拉力（实测第二轮起就漂），逐轮提醒是 harness 的常规做法，几个 token 的事。
+  // 只进模型看的那份，界面上的用户消息不带。
+  modelContent = `${modelContent}\n\n[Reply in the language of the user's message above. Chinese in tool output is not a cue to switch.]\n`
+    // 桌面版的一轮研究是无人值守的：没人会回答中途的提问，问了就等于把整场停在那里
+    // （2026-09-02 Windows 实测，模型写到一半停下来问用户要不要继续）。
+    + `[Unattended run: nobody is watching to answer questions. Do not stop to ask. Make the reasonable choice, state the assumption in one line, and keep going until the deliverable is done or you hit a hard blocker. ` +
+    `One exception: if you cannot tell what the data is even after inspecting it, ask the user in one short question and end your turn; pick it back up when they answer.]`;
 
   runtime.session.turn += 1;
   const modelMessage = { role: "user", content: modelContent };
@@ -709,14 +718,9 @@ function json(data: unknown, status = 200): Response {
 }
 
 function errorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  if (raw.includes("API key") || raw.includes("API")) {
-    return "本地后端没有可用的模型凭据，请先配置 DeepSeek API key。";
-  }
-  if (raw.includes("fetch failed") || raw.includes("timeout")) {
-    return "模型服务暂时无法连接，请检查本机网络后重试。";
-  }
-  return publicText(raw, 300) || "本地研究运行失败。";
+  // 原始错误先落 stderr：以前这里什么都不记，误判之后连事后查都查不到。
+  console.error("[run] failed:", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+  return classifyRunError(error, activeProvider(), publicText);
 }
 
 export const SESSION_COOKIE = "omnisci_session";
@@ -916,8 +920,10 @@ export const apiFetch = async (request: Request): Promise<Response> => {
       }
       const content = typeof body.content === "string" ? body.content.trim() : "";
       if (!content || content.length > 20_000) return json({ error: "消息为空或过长" }, 400);
-      const wantedData = typeof body.dataPath === "string" ? body.dataPath.trim() : "";
-      // 界面传来的路径不能白信：一样按工作区边界校验，越界直接拒。
+      const wantedData = typeof body.dataPath === "string"
+        ? snapToCase(WORKSPACE_ROOT, normalizeDataPathFor(WORKSPACE_ROOT, body.dataPath))
+        : "";
+      // 界面传来的路径不能白信：先归一（脱敏展示形态、绝对路径都收），再按工作区边界校验，越界直接拒。
       if (wantedData) {
         try {
           listWorkspace(wantedData);
@@ -999,10 +1005,18 @@ export const apiFetch = async (request: Request): Promise<Response> => {
           // 又会把跑了半小时的运行当场打死。所以给 30 秒宽限：页面回来
           //（重新拉会话）就取消，真没人回来才停。
           clearTimeout(runtime.disconnectTimer);
-          runtime.disconnectTimer = setTimeout(() => {
-            runtime.disconnectTimer = undefined;
-            runtime.abort?.abort();
-          }, 30_000);
+          // 桌面版：界面走了也不中止研究。2026-09-02 实测：用户关掉一个窗口（或者浏览器里
+          // 那一页），30 秒后跑了半小时的研究被当场打死，而结果本来会照常写进会话库、下次
+          // 打开就能看到。中止只在浏览器模式显式要求时才做（OMNISCI_ABORT_ON_DISCONNECT=1），
+          // 那种部署里没人看着确实在烧钱。
+          if (process.env.OMNISCI_ABORT_ON_DISCONNECT === "1") {
+            runtime.disconnectTimer = setTimeout(() => {
+              runtime.disconnectTimer = undefined;
+              runtime.abort?.abort();
+            }, 30_000);
+          } else {
+            console.error(`[run] ${runtime.id} viewer disconnected; research keeps running in the background`);
+          }
         },
       });
       return new Response(stream, {

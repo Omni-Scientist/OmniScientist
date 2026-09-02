@@ -33,6 +33,14 @@ client = (OpenAI(api_key=_GATEWAY_KEY, base_url=_GATEWAY_URL, timeout=120, max_r
 _ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 _anthropic_client = (OpenAI(api_key=_ANTHROPIC_KEY, base_url="https://api.anthropic.com/v1/",
                             timeout=120, max_retries=2) if _ANTHROPIC_KEY else None)
+# How deep a 5-gen Claude thinks, as a knob rather than a switch: low | medium | high | xhigh | max.
+# UNSET is the default and changes nothing -- the API's own default (high) applies, adaptive thinking stays on.
+# Setting it lower makes thinking shallower, NOT absent; output tokens are ~85% of the bill on a writing run,
+# and thinking bills as output, so this is the one lever that moves cost without turning reasoning off.
+EFFORT = (os.environ.get("OMNIST_EFFORT") or "").strip().lower() or None
+_EFFORT_OK = ("low", "medium", "high", "xhigh", "max")
+if EFFORT and EFFORT not in _EFFORT_OK:
+    raise SystemExit("OMNIST_EFFORT must be one of %s (got %r)" % (", ".join(_EFFORT_OK), EFFORT))
 # OpenAI OFFICIAL (api.openai.com) -> frontier GPT / o-series, with AUTOMATIC prompt caching: OpenAI caches a stable
 # prefix >=1024 tokens server-side (no cache_control needed), billing the cached portion at a discount on every
 # subsequent call. Routed here whenever OPENAI_API_KEY is set. This is the default backbone path.
@@ -49,6 +57,16 @@ _local_client = (OpenAI(api_key=os.environ.get("OMNIST_LOCAL_KEY", "EMPTY"), bas
 _OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
 _openrouter_client = (OpenAI(api_key=_OPENROUTER_KEY, base_url="https://openrouter.ai/api/v1",
                              timeout=600, max_retries=2) if _OPENROUTER_KEY else None)
+# DeepSeek OFFICIAL API (api.deepseek.com): the only channel serving the vision side-car deepseek-v4-flash-vision-exp
+# (OpenRouter blocks it under the account's data policy), and the channel with real prompt caching. Routed by exact
+# model name, no prefix needed. The text model deepseek-v4-flash is ALSO routed here when the key is set: generic
+# proxies in front of it tend to sit behind a ~120 s read timeout that its long reasoning generations blow through
+# (HTTP 524 killed a whole stage-3 mid-run, 2026-08-29); the official endpoint has no such cap.
+_DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_API")
+_deepseek_client = (OpenAI(api_key=_DEEPSEEK_KEY, base_url="https://api.deepseek.com",
+                           timeout=600, max_retries=2) if _DEEPSEEK_KEY else None)
+_DEEPSEEK_OFFICIAL = ("deepseek-v4-flash-vision-exp",      # only exists on the official API
+                      "deepseek-v4-flash")                  # falls back to the configured gateway when no key is set
 try:                                                     # native Anthropic SDK -> PROMPT CACHING (the OpenAI-compat
     import anthropic as _anthropic_sdk                   # endpoint above cannot cache); used only for the multi-step
     _anthropic_native = (_anthropic_sdk.Anthropic(api_key=_ANTHROPIC_KEY, timeout=120, max_retries=2)   # agent loop
@@ -72,6 +90,12 @@ def client_for(model):
         return _local_client
     if str(model).startswith("or/") and _openrouter_client is not None:
         return _openrouter_client
+    if str(model) in _DEEPSEEK_OFFICIAL:
+        if _deepseek_client is not None:
+            return _deepseek_client
+        if str(model) == "deepseek-v4-flash" and client is not None:   # the text model may also be carried by the gateway
+            return client
+        raise RuntimeError("model %r needs DEEPSEEK_API_KEY in the environment (not set)" % model)
     if str(model).startswith(("claude-sonnet-5", "claude-opus-5", "claude-opus-4-8", "claude-haiku-5", "claude-fable-5", "claude-mythos-5", "claude-5")):
         if _anthropic_client is None:
             raise RuntimeError("model %r needs ANTHROPIC_API_KEY in the environment (not set)" % model)
@@ -89,11 +113,28 @@ def _is_5gen(model):
     return str(model).startswith(("claude-sonnet-5", "claude-opus-5", "claude-opus-4-8", "claude-haiku-5", "claude-fable-5", "claude-mythos-5", "claude-5"))
 
 
+def _image_source(url):
+    """An OpenAI image_url value -> an Anthropic image source. img_block emits a data: URI; a plain http(s) URL is
+    passed through as a url source. Returns None for anything else so one malformed block is dropped instead of
+    killing the call."""
+    if url.startswith("data:"):
+        head, _, b64 = url.partition(",")
+        if not b64:
+            return None
+        return {"type": "base64", "media_type": head[5:].split(";")[0] or "image/png", "data": b64}
+    if url.startswith(("http://", "https://")):
+        return {"type": "url", "url": url}
+    return None
+
+
 def _to_anthropic(messages, tools):
     """OpenAI-format (system / user / assistant+tool_calls / tool) -> native Anthropic (system, messages, tools),
     coalescing consecutive same-role turns (Anthropic needs strict user/assistant alternation) and placing <=4
     ephemeral cache_control breakpoints on the STABLE prefix (system, tools, last turn) so every step after the
-    first bills that prefix at ~1/10. Text-only: the agent loop never carries image blocks (vision -> chat())."""
+    first bills that prefix at ~1/10. Images are CONVERTED, not dropped: this used to be a text-only path on the
+    assumption that only the agent loop reached it, and chat() (which is where every vision call lives) took the
+    OpenAI-compatible endpoint instead. Once chat() started asking for cache, silently discarding image blocks
+    would have handed the model a caption with no picture and let it answer as if it had looked."""
     system_text, conv = None, []
 
     def push(role, blocks):
@@ -124,9 +165,20 @@ def _to_anthropic(messages, tools):
                     inp = {}
                 blocks.append({"type": "tool_use", "id": tc.get("id"), "name": fn.get("name"), "input": inp})
             push("assistant", blocks)
-        else:                                            # user
-            txt = c if isinstance(c, str) else " ".join(p.get("text", "") for p in (c or []) if isinstance(p, dict) and p.get("type") == "text")
-            push("user", [{"type": "text", "text": txt or "(empty)"}])
+        elif isinstance(c, str):                         # user, plain text
+            push("user", [{"type": "text", "text": c or "(empty)"}])
+        else:                                            # user, content blocks (text and/or images, order preserved)
+            blocks = []
+            for p in (c or []):
+                if not isinstance(p, dict):
+                    continue
+                if p.get("type") == "text" and (p.get("text") or "").strip():
+                    blocks.append({"type": "text", "text": p["text"]})
+                elif p.get("type") == "image_url":
+                    src = _image_source((p.get("image_url") or {}).get("url") or "")
+                    if src:
+                        blocks.append({"type": "image", "source": src})
+            push("user", blocks or [{"type": "text", "text": "(empty)"}])
 
     atools = [{"name": (t.get("function") or {}).get("name"),
                "description": (t.get("function") or {}).get("description", ""),
@@ -186,6 +238,50 @@ def _responses_user_content(c):
                 block["detail"] = detail
             out.append(block)
     return out
+
+
+def _from_stream(stream):
+    """Consume a chat.completions STREAM into the object shape the non-streaming path returns (choices[0].message
+    .content / .tool_calls, usage.prompt_tokens / .completion_tokens). Tool-call deltas arrive in pieces keyed by
+    index (id and name once, arguments as fragments) and are re-assembled here; the usage frame comes last when the
+    request asked for stream_options.include_usage. Streaming is how a long reasoning generation survives a gateway
+    that sits behind a proxy read timeout: Cloudflare-style fronts cut any response not COMPLETED within ~120 s
+    (HTTP 524), which killed every glm-5.3-flash ideation call; streamed reasoning deltas keep the connection busy,
+    so the window never elapses."""
+    text, calls, usage = [], {}, None
+    for chunk in stream:
+        u = getattr(chunk, "usage", None)
+        if u is not None:
+            usage = u
+        for ch in (getattr(chunk, "choices", None) or []):
+            d = getattr(ch, "delta", None)
+            if d is None:
+                continue
+            if getattr(d, "content", None):
+                text.append(d.content)
+            for tc in (getattr(d, "tool_calls", None) or []):
+                i = getattr(tc, "index", None)
+                i = 0 if i is None else i
+                slot = calls.setdefault(i, {"id": None, "name": "", "args": []})
+                if getattr(tc, "id", None):
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None) and not slot["name"]:
+                        slot["name"] = fn.name
+                    if getattr(fn, "arguments", None):
+                        slot["args"].append(fn.arguments)
+    tool_calls = [SimpleNamespace(id=s["id"] or ("call_%d" % i), type="function",
+                                  function=SimpleNamespace(name=s["name"], arguments="".join(s["args"]) or "{}"))
+                  for i, s in sorted(calls.items())]
+    pt = (getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else 0
+    ct = (getattr(usage, "completion_tokens", 0) or 0) if usage is not None else 0
+    if usage is None:                                     # no usage frame from the gateway: estimate, never bill 0
+        ct = max(1, len("".join(text)) // 4)
+    us = SimpleNamespace(prompt_tokens=pt, completion_tokens=ct, cache_read_input_tokens=0, cache_creation_input_tokens=0,
+                         prompt_tokens_details=(getattr(usage, "prompt_tokens_details", None) if usage is not None else None))
+    msg = SimpleNamespace(content=("".join(text) or None), tool_calls=(tool_calls or None))
+    return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=us)
 
 
 def _to_responses(messages, tools):
@@ -290,6 +386,15 @@ def create(model, messages, max_tokens=700, temperature=0.0, seed=None, tools=No
     (system + tools + prior turns) is then billed at ~1/10 on every step after the first. Everything else keeps the
     OpenAI-format path: the gateway passes temperature/seed for determinism; Anthropic 5-gen omits them."""
     _throttle(model)                                    # per-model rate-limit gap (default none; e.g. minimax on OpenRouter)
+    # ALWAYS-REASONING models (DeepSeek V4 family) burn thousands of tokens of reasoning_content BEFORE the
+    # visible answer, and reasoning counts toward max_tokens. A caller asking for a ~300-word paragraph with a
+    # ~2k cap gets finish='length' with EMPTY content almost every time (this silently gutted whole sections:
+    # Results came out 1 paragraph, the results table empty). Give such models a flat reasoning margin; the
+    # ANSWER length is still governed by the prompt's word budget, so this only prevents starvation.
+    if "deepseek" in str(model).lower():
+        max_tokens = max_tokens + 8000
+    if "glm" in str(model).lower():                      # GLM-5.3-flash also reasons inside max_tokens (dialled low below)
+        max_tokens = max_tokens + 2000
     if cache and _anthropic_native is not None and _is_5gen(model):
         sys_param, conv, atools = _to_anthropic(messages, tools)
         kw = {"model": model, "max_tokens": max_tokens, "messages": conv}
@@ -298,6 +403,8 @@ def create(model, messages, max_tokens=700, temperature=0.0, seed=None, tools=No
         if atools:
             kw["tools"] = atools
             kw["tool_choice"] = {"type": "auto"}
+        if EFFORT:
+            kw["output_config"] = {"effort": EFFORT}
         return _from_anthropic(_anthropic_native.messages.create(**kw))
     cl = client_for(model)
     send_model = _bare_model(model, cl)
@@ -340,6 +447,18 @@ def create(model, messages, max_tokens=700, temperature=0.0, seed=None, tools=No
             kw["extra_body"] = {"prompt_cache_key": "omnist-" + hashlib.md5(anchor[:400].encode()).hexdigest()[:16]}
     else:
         kw["max_tokens"] = max_tokens
+        if EFFORT and cl is _anthropic_client and _is_5gen(model):
+            # Same knob as the native branch, carried through the OpenAI-compatible endpoint. This is the path
+            # stage-3 writing takes (chat() does not ask for cache), so without this line OMNIST_EFFORT would
+            # silently apply to the agent loop only and do nothing to the run's biggest cost centre.
+            kw["extra_body"] = {"output_config": {"effort": EFFORT}}
+        if cl is client and "glm" in str(model).lower():
+            # Z.ai's GLM-5.3-flash ALWAYS thinks and only takes an effort DIAL ('cannot be disabled; please use low,
+            # high, or max'). At its default it spends the whole budget reasoning (a 300-token 'reply PONG' came back
+            # EMPTY, a 7800-token essay never started its answer), so the dial is always set: OMNIST_EFFORT when
+            # given (medium -> low, xhigh -> max), else low. Dial the thinking, never switch it off.
+            _eff = {"low": "low", "medium": "low", "high": "high", "xhigh": "max", "max": "max"}.get(EFFORT or "low", "low")
+            kw["extra_body"] = {"reasoning_effort": _eff}
         if cl is _local_client and os.environ.get("OMNIST_LOCAL_NOTHINK"):
             # Qwen3.5 is a thinking model that spends the WHOLE budget on <think> and returns EMPTY content (out=0c) on
             # short WRITING calls. Disabling thinking fixes that (verified content 0 -> 1074, tool-calling still works).
@@ -348,19 +467,25 @@ def create(model, messages, max_tokens=700, temperature=0.0, seed=None, tools=No
             kw["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
     if tools is not None:
         kw["tools"] = tools; kw["tool_choice"] = tool_choice
-    if cl is client or cl is _local_client or cl is _openrouter_client:   # gateway + local + openrouter take temperature/seed
+    if cl is client or cl is _local_client or cl is _openrouter_client or cl is _deepseek_client:   # these take temperature/seed
         kw["temperature"] = temperature
         if seed is not None:
             kw["seed"] = seed
+    if cl is client and (os.environ.get("OMNIST_STREAM") == "1" or "glm" in str(model).lower()):
+        # A gateway behind a ~120 s proxy read timeout cuts a non-streamed long reasoning answer with a 524 before it
+        # completes (every glm-5.3-flash ideation call died that way). Stream and re-assemble instead.
+        kw["stream"] = True
+        kw["stream_options"] = {"include_usage": True}
+        return _from_stream(cl.chat.completions.create(**kw))
     return cl.chat.completions.create(**kw)
 
 
 _LOCK = threading.Lock()
 U = {}   # model -> {"in","out","calls","mm_calls"}   (mm_calls = calls that included an image)
 PRICE = {"claude-sonnet-4-6": (3.0, 15.0),
-         "claude-sonnet-5": (2.0, 10.0),        # INTRODUCTORY through 2026-08-31 (reverts to standard 3.0/15.0)
-         "claude-opus-4-8": (5.0, 25.0),        # most capable Opus tier (2.5x sonnet-5 intro price; half of fable-5)
-         "claude-fable-5": (10.0, 50.0),        # Anthropic's most capable widely-released model (5x sonnet-5 intro price)
+         "claude-sonnet-5": (3.0, 15.0),        # standard price; the $2/$10 introductory rate expired 2026-08-31
+         "claude-opus-4-8": (5.0, 25.0),        # most capable Opus tier (1.67x sonnet-5; half of fable-5)
+         "claude-fable-5": (10.0, 50.0),        # Anthropic's most capable widely-released model (3.3x sonnet-5)
          "claude-mythos-5": (10.0, 50.0),       # same tier/price as fable-5 (Project Glasswing only)
          "gpt-5.4": (1.25, 10.0),
          "gpt-5.5": (5.0, 30.0), "gpt-5.5-pro": (30.0, 180.0),
@@ -370,7 +495,21 @@ PRICE = {"claude-sonnet-4-6": (3.0, 15.0),
          "or/minimax/minimax-m3": (0.30, 1.20), "or/stepfun/step-3.7-flash": (0.20, 1.15),       # OpenRouter real pricing (2026-07)
          "or/bytedance-seed/seed-1.6": (0.25, 2.00),
          "or/z-ai/glm-5.2": (0.41, 1.28), "or/moonshotai/kimi-k2.7-code": (0.72, 3.49),
-         "or/qwen/qwen3.7-max": (1.25, 3.75)}
+         # Zhipu GLM-5.3-Flash as a bare name on an OpenAI-compatible gateway. Z.ai LIST price (2026-08-26 launch):
+         # $0.15 in / $0.50 out, cache $0.03; a 50% launch discount ($0.075 / $0.25) runs to 2026-09-09 24:00 UTC+8.
+         "glm-5.3-flash": (0.15, 0.50),
+         # OpenRouter bills Z.ai's launch price $0.075 / $0.25 until 2026-09-09, then the $0.15 / $0.50 list price
+         "or/z-ai/glm-5.3-flash": (0.075, 0.25),
+         "or/qwen/qwen3.7-max": (1.25, 3.75),
+         # DeepSeek V4 (1M ctx, text-only -> pair with OMNIST_PERCEIVER for the vision leg). The -0731 snapshot is the
+         # released re-post-trained revision tuned for agent workflows; the undated id is the floating alias.
+         "or/deepseek/deepseek-v4-flash-0731": (0.14, 0.28), "or/deepseek/deepseek-v4-flash": (0.14, 0.28),
+         "or/deepseek/deepseek-v4-pro": (0.435, 0.87),
+         # bare name = DeepSeek OFFICIAL upstream (api.deepseek.com, real prompt cache); official list price
+         "deepseek-v4-flash": (0.14, 0.28),
+         # official-API-only vision side-car (2026-08-21 launch): V4-Flash pricing base, each image auto-resized
+         # to <=384 input tokens.
+         "deepseek-v4-flash-vision-exp": (0.14, 0.28)}
 
 
 def chat(content, model, max_tokens=700, temperature=0.0, seed=0, label=""):
@@ -381,8 +520,27 @@ def chat(content, model, max_tokens=700, temperature=0.0, seed=0, label=""):
     last = None
     for attempt in range(4):                                # ride through transient gateway blips (500 / timeout)
         try:
+            # cache=True asks for the NATIVE Anthropic SDK on a 5-gen Claude (every other model ignores it and
+            # keeps its old path). Two things ride on that route, not just prompt caching: OMNIST_EFFORT only
+            # applies there -- the OpenAI-compatible endpoint accepts output_config and silently discards it
+            # (measured: low 953 vs max 723 output tokens, unordered; native low 339 vs max 1108, monotone) --
+            # and stage-3 writing, the run's biggest cost centre, is all chat().
             r = create(model, [{"role": "user", "content": content}], max_tokens=max_tokens,
-                       temperature=temperature, seed=seed)
+                       temperature=temperature, seed=seed, cache=True)
+            # Always-reasoning models (DeepSeek V4 flash / vision-exp) intermittently return EMPTY content --
+            # budget eaten by reasoning (finish='length') OR a server-side blank with finish='stop' (observed
+            # 5x in a row on the results-table call). ANY empty reply gets one tripled-budget retry.
+            _ch = r.choices[0]
+            if not (_ch.message.content or "").strip():
+                _u0 = getattr(r, "usage", None)             # bill the wasted first call too (honest ledger)
+                if _u0:
+                    with _LOCK:
+                        m0 = U.setdefault(model, {"in": 0, "out": 0, "calls": 0, "mm_calls": 0, "cread": 0, "cwrite": 0})
+                        m0["in"] += getattr(_u0, "prompt_tokens", 0) or 0
+                        m0["out"] += getattr(_u0, "completion_tokens", 0) or 0
+                        m0["calls"] += 1
+                r = create(model, [{"role": "user", "content": content}], max_tokens=max_tokens * 3,
+                           temperature=temperature, seed=seed, cache=True)
             u = getattr(r, "usage", None)
             with _LOCK:
                 m = U.setdefault(model, {"in": 0, "out": 0, "calls": 0, "mm_calls": 0, "cread": 0, "cwrite": 0})
@@ -395,10 +553,7 @@ def chat(content, model, max_tokens=700, temperature=0.0, seed=0, label=""):
                     if ptd is not None:
                         m["cread"] += getattr(ptd, "cached_tokens", 0) or 0
                 m["calls"] += 1; m["mm_calls"] += int(is_mm)
-            # 推理型模型（deepseek-v4-*、GLM 等）在思考预算吃满时会把答案放进 reasoning_content，
-            # content 返回空串。只读 content 的话拿到的是空回复，agent loop 会静默空转重试。
-            _msg = r.choices[0].message
-            resp = _msg.content or getattr(_msg, "reasoning_content", None) or ""
+            resp = r.choices[0].message.content or ""
             print("  [chat] %-24s in=%5dc out=%5dc  cap=%d tok" % ((label or "-")[:24], _inlen, len(resp), max_tokens))
             return resp
         except Exception as e:

@@ -11,7 +11,6 @@ import {
   type Scope,
   type SettingsPatch,
   type SettingsState,
-  EFFORTS,
   checkUpdate,
   type UpdateState,
   startDownload,
@@ -203,7 +202,23 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
   const signature = [selected.scope, selected.id, model.trim(), baseUrl.trim(), apiKey.trim(), effort]
     .join("\u0001");
   // 按当前下拉里选的模型判，不用后端那份已保存的：换了模型这一行要立刻跟着出现或消失。
-  const showsEffort = /^(gpt-5|o[1-9]([-.]|$))/.test(model.trim());
+  // 规则表由后端下发，唯一真值在 cli/src/model.ts 的 EFFORT_RULES。这里以前自己写了
+  // 一份同样的正则，GLM（认 low/high/max，跟 OpenAI 那五档不是一套）出来之后就漂了。
+  const effortRule = (state?.effortRules ?? []).find((rule) => {
+    try {
+      return new RegExp(rule.pattern).test(model.trim());
+    } catch {
+      // 后端发来的正则编不动就当不匹配。这一行少显示，好过整个设置面板白屏。
+      return false;
+    }
+  });
+  const showsEffort = Boolean(effortRule);
+  // 换了模型之后旧档位可能不在新模型的表里（gpt-5 的 medium 换到 glm 就非法），
+  // 那就当没选。不这么夹一下会把一个上游必然拒绝的值发出去。required 的那一族没有
+  // "不设置"这个选项，所以夹到它的默认档，让下拉显示的和实际要发的是同一个值。
+  const effortValue = effortRule?.levels.includes(effort)
+    ? effort
+    : (effortRule?.required ? effortRule.fallback : "");
 
   /** 改了任何一项，之前那次测试就不算数了。 */
   function touched() {
@@ -219,7 +234,7 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
       model: model.trim(),
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       ...(needsEndpoint ? { baseUrl: baseUrl.trim() } : {}),
-      ...(effort ? { effort } : {}),
+      ...(effortValue ? { effort: effortValue } : {}),
     };
   }
 
@@ -559,24 +574,31 @@ export function SettingsDialog({ open, onClose, onSaved }: SettingsDialogProps) 
                 </div>
               </div>
 
-              {/* 只有 OpenAI 的推理模型收这个字段，别家塞过去会 400，所以按模型判。 */}
-              {showsEffort ? (
+              {/* 收这个字段的模型才显示，别家塞过去会 400，所以按模型判，档位也按模型给。 */}
+              {showsEffort && effortRule ? (
                 <div className="field-row">
                   <label className="field-label" htmlFor="effort-select">{t("思考")}</label>
                   <div className="field-controls">
                     <select
                       id="effort-select"
                       className="field-select"
-                      value={effort}
+                      value={effortValue}
                       onChange={(event) => {
                         setEffort(event.target.value);
                         touched();
                       }}
                     >
-                      <option value="">{t("不设置")}</option>
-                      {EFFORTS.map((level) => (
+                      {/* required 的那一族（GLM）不给"不设置"这个选项：它不带档位就把
+                          预算全烧在思考上、正文返回空串，让用户能选出坏配置没有意义。 */}
+                      {effortRule.required ? null : <option value="">{t("不设置")}</option>}
+                      {effortRule.levels.map((level, index) => (
                         <option key={level} value={level}>
-                          {level}{level === "xhigh" ? t("（最强）") : level === "none" ? t("（不推理）") : ""}
+                          {level}
+                          {level === "none"
+                            ? t("（不推理）")
+                            : index === effortRule.levels.length - 1
+                              ? t("（最强）")
+                              : ""}
                         </option>
                       ))}
                     </select>

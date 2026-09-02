@@ -7,7 +7,10 @@ referee scores) is reported separately, not inside the paper.
 """
 import os, re, shutil, subprocess, json, urllib.request, urllib.parse
 
-TECTONIC = os.path.expanduser("~/.local/bin/tectonic")
+# Prefer a tectonic on PATH; fall back to a common user-local install; else the bare name so PATH
+# resolves at call time. 桌面版把受管的 tectonic 前置进 PATH，写死 ~/.local/bin 会找不到它。
+_TECTONIC_LOCAL = os.path.expanduser("~/.local/bin/tectonic")
+TECTONIC = shutil.which("tectonic") or (_TECTONIC_LOCAL if os.path.exists(_TECTONIC_LOCAL) else "tectonic")
 _HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(_HERE, "..", "template")
 # venue-appropriate templates, picked by the target journal (config `template:` / the skill maps the journal name).
@@ -125,13 +128,60 @@ def _bib_escape(s):
     s = re.sub(r"<[^>]+>", "", s)        # strip HTML tags OpenAlex leaves in titles (e.g. <i>Ilex paraguariensis</i>)
     for u, name in _BIB_GREEK.items():   # bib titles are plain text -> transliterate unicode greek/arrows to ASCII names
         s = s.replace(u, name)
+    s = _translit(s)                     # Cyrillic etc. romanized -- T1 was silently DROPPING those glyphs
     for a, b in (("\\", ""), ("&", "\\&"), ("%", "\\%"), ("_", "\\_"), ("#", "\\#"), ("$", "\\$"), ("~", "-"), ("^", "")):
         s = s.replace(a, b)
     return s
 
 
+_CYR = {"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z",
+        "и": "i", "й": "i", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+        "с": "s", "т": "t", "у": "u", "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh",
+        "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya"}
+
+
+def _translit(s):
+    """Transliterate non-Latin author/title characters the T1-encoded build cannot render (audit item 7: a
+    Cyrillic author name silently LOST letters in the shipped PDF). Cyrillic gets a real romanization; any
+    other non-ASCII falls back to its NFKD base letter (é->e) rather than disappearing."""
+    import unicodedata
+    out = []
+    for ch in str(s or ""):
+        low = ch.lower()
+        if low in _CYR:
+            t = _CYR[low]
+            out.append(t.capitalize() if ch.isupper() and t else t)
+        elif ord(ch) > 0xFF:                               # beyond Latin-1: T1 rendering is unreliable (s-cedilla
+            base = unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode()   # U+015F was DROPPED)
+            out.append(base or "")
+        else:
+            out.append(ch)                                 # Latin-1 accents (é, ö, ...) render fine -> keep
+    return "".join(out)
+
+
+def _bib_hygiene(bib):
+    """Final hygiene for an ASSEMBLED bib string (covers bibs built before the _translit layer existed, e.g.
+    replay checkpoints): T1-unrenderable punctuation to LaTeX equivalents, then romanize what remains."""
+    for a, b in (("—", "--"), ("–", "-"), ("“", "``"), ("”", "''"), ("’", "'"), ("‘", "`"), ("…", "...")):
+        bib = bib.replace(a, b)
+    return _translit(bib)
+
+
+def _fix_name_case(name):
+    """'igor merlini' / 'ALI TOZAR' -> 'Igor Merlini' / 'Ali Tozar'. Mixed-case names pass through untouched;
+    lowercase particles (van/von/der/...) are kept lowercase after the first word."""
+    n = (name or "").strip()
+    if not n or (n != n.lower() and n != n.upper()):
+        return n
+    parts = []
+    for i, w in enumerate(n.lower().split()):
+        parts.append(w if (i > 0 and w in ("van", "von", "der", "den", "de", "da", "la", "le", "di", "del", "ter"))
+                     else (w[:1].upper() + w[1:]))
+    return " ".join(parts)
+
+
 def _bib_entry(key, p):
-    authors = " and ".join(p["authors"]) if p["authors"] else "Anonymous"
+    authors = (" and ".join(_fix_name_case(a) for a in p["authors"])) if p["authors"] else "Anonymous"
     title = _bib_escape(re.sub(r"[{}]", "", (p["title"] or "Untitled"))).strip()
     fields = ["  title={" + title + "}", "  author={" + _bib_escape(authors) + "}"]
     if p.get("year"):
@@ -210,7 +260,7 @@ def _keygen(p, used):
     base += str(p.get("year") or "")
     k, i = base, 0
     while (not k) or (k in used):
-        k = base + "abcdefghijklmnop"[i % 16]
+        k = base + ("abcdefghijklmnop"[i] if i < 16 else str(i))   # numeric suffixes past 16 -> can never loop forever
         i += 1
     used.add(k)
     return k
@@ -238,7 +288,8 @@ def _relevant(p, anchor):
     return sum(1 for w in anchor if w in text) >= 2
 
 
-def gather_citations(chat, model, C, idea, obs, log=print, use=True, n_queries=6, per_query=6, max_refs=16):
+def gather_citations(chat, model, C, idea, obs, log=print, use=True, n_queries=12, per_query=8, max_refs=40,
+                     min_refs=20):
     """Real references from OpenAlex (keyless, the default engine). Returns (catalog[(key,paper)], bibtex_str).
     Never fabricates: on any failure it logs and returns ([], '') so the writer falls back to citation-free prose.
     Off-topic API noise is dropped by a domain-anchored relevance filter (so no grapevine-pest / bionic-leg refs)."""
@@ -246,10 +297,21 @@ def gather_citations(chat, model, C, idea, obs, log=print, use=True, n_queries=6
         log("  [cite] citations disabled -> citation-free build")
         return [], ""
     try:
+        # Spread the queries across three widths on purpose. Asking only for queries about "THIS specific
+        # object/class" made a capable model translate a narrow hypothesis into equally narrow search strings
+        # that match almost nothing: on rruff_raman, sonnet-5 returned 7 references on four independent draws
+        # where a vaguer generator returned 20-39. The domain-naming rule stays -- it is what keeps grapevine-pest
+        # noise out -- but a third of the queries now sit at the level of the object class itself, which is where
+        # the large literature lives. The relevance filter still ranks what comes back, so widening the net here
+        # costs recall of nothing and only changes what is available to rank.
         raw = chat("You are " + C["role"] + ". To write the Related Work of a short report about a " + C["subject"]
                    + ", propose " + str(n_queries) + " concise literature-search queries (3-7 words each) to find REAL "
-                   "prior work on THIS specific object/class -- each query MUST name the domain/object (not a generic "
-                   "phrase like 'benchmark dataset' or 'deep learning' that would match unrelated fields). Observation: "
+                   "prior work. Spread them evenly across three widths: (a) the exact phenomenon in the hypothesis, "
+                   "(b) the measurement, method or instrument as applied to this kind of object, (c) the object or "
+                   "material class itself, broadly, as a field would name it. Every query MUST still name the "
+                   "domain/object so it cannot match an unrelated field (never a bare 'benchmark dataset' or 'deep "
+                   "learning'), but the (c) queries should be broad enough that hundreds of papers exist for them. "
+                   "Observation: "
                    + (obs or "")[:500] + ". Hypothesis: " + (idea or "")[:300] + ". Return ONLY a JSON array of strings.",
                    model, 200)
     except Exception as e:
@@ -277,15 +339,36 @@ def gather_citations(chat, model, C, idea, obs, log=print, use=True, n_queries=6
                 spare.append((ov, p))
             else:
                 dropped += 1                               # 0 anchors = off-topic API noise (grapevine / bionic) -> drop
-    if len(catalog) < 6 and spare:                         # the strict >=2 filter left too few -> backfill the best 1-anchor refs
+    if len(catalog) < min_refs and spare:                  # the strict >=2 filter left too few -> backfill the best 1-anchor refs
         added = 0
         for ov, p in sorted(spare, key=lambda x: -x[0]):
-            if len(catalog) >= 8:
+            if len(catalog) >= min_refs + 3:
                 break
             catalog.append((_keygen(p, used), p)); added += 1
         log("  [cite] backfilled %d single-anchor reference(s) so the bibliography is not too thin" % added)
     if dropped:
         log("  [cite] dropped %d off-topic reference(s) by relevance filter" % dropped)
+    if len(catalog) < min_refs:                            # broadened second round: the wider field / method family
+        try:
+            raw2 = chat("You are " + C["role"] + ". The specific queries returned too few papers. Propose "
+                        + str(n_queries) + " BROADER literature-search queries (3-6 words) around the same study: "
+                        "the wider field, the family of methods, the class of data, adjacent applications. "
+                        "Observation: " + (obs or "")[:400] + ". Hypothesis: " + (idea or "")[:300]
+                        + ". Return ONLY a JSON array of strings.", model, 200)
+            for q in _parse_json_list(raw2)[:n_queries]:
+                if len(catalog) >= max_refs:
+                    break
+                for p in (_openalex(q, per_query, log) or _crossref(q, per_query, log)):
+                    if len(catalog) >= max_refs:
+                        break
+                    t = p.get("title", "")
+                    if any(t == c[1]["title"] for c in catalog):
+                        continue
+                    if _overlap(p) >= 1:                   # relaxed acceptance for the broadened round
+                        catalog.append((_keygen(p, used), p))
+            log("  [cite] broadened round -> %d references total" % len(catalog))
+        except Exception as e:
+            log("  [cite] broadened round failed: " + type(e).__name__)
     bib = "\n\n".join(_bib_entry(k, p) for k, p in catalog)
     log(("  [cite] " + str(len(catalog)) + " real references gathered (OpenAlex/Crossref)") if catalog
         else "  [cite] no references found -> citation-free build (honest fallback)")
@@ -309,6 +392,14 @@ _UNI2 = {"×": r"$\times$", "≈": r"$\approx$", "≤": r"$\leq$", "≥": r"$\ge
          "−": "-", "·": r"$\cdot$", "→": r"$\rightarrow$", "⊙": r"$_\odot$",
          "Å": r"\AA{}", "²": r"\textsuperscript{2}", "³": r"\textsuperscript{3}", "°": r"\textdegree{}",
          "–": "--", "—": "---", "‐": "-", "∼": r"$\sim$", "≃": r"$\simeq$", "≠": r"$\neq$", "Φ": r"$\Phi$"}
+# Accented Latin -> LaTeX accents. Without this, the final non-ASCII strip DELETED the letter outright:
+# 'Cramér-Rao' shipped as 'Cramr-Rao' in a published title. Escape, never delete.
+_UNI_ACCENT = {"é": r"\'e", "è": r"\`e", "ê": r"\^e", "ë": r"\"e", "á": r"\'a", "à": r"\`a", "â": r"\^a",
+               "ä": r"\"a", "ã": r"\~a", "í": r"\'i", "ì": r"\`i", "î": r"\^i", "ï": r"\"i", "ó": r"\'o",
+               "ò": r"\`o", "ô": r"\^o", "ö": r"\"o", "õ": r"\~o", "ú": r"\'u", "ù": r"\`u", "û": r"\^u",
+               "ü": r"\"u", "ñ": r"\~n", "ç": r"\c{c}", "ø": r"\o{}", "å": r"\aa{}", "æ": r"\ae{}",
+               "É": r"\'E", "È": r"\`E", "Á": r"\'A", "Ä": r"\"A", "Ö": r"\"O", "Ü": r"\"U", "Ç": r"\c{C}",
+               "Ø": r"\O{}", "ß": r"\ss{}"}
 
 
 def _fix_unicode_math(s):
@@ -322,6 +413,8 @@ def _fix_unicode_math(s):
         s = re.sub(re.escape(u) + r"(?:_\{?([A-Za-z0-9]+)\}?)?",
                    lambda m, t=tex: "$" + t + ("_{" + m.group(1) + "}" if m.group(1) else "") + "$", s)
     for u, tex in _UNI2.items():
+        s = s.replace(u, tex)
+    for u, tex in _UNI_ACCENT.items():                         # accented letters become LaTeX accents, never deletions
         s = s.replace(u, tex)
     s = re.sub(r"[^\x00-\x7F]", "", s)                         # drop any remaining non-ASCII outside math (compile safety)
     s = re.sub(r"\$([^$]+)\$ ?\$([^$]+)\$", r"$\1 \2$", s)     # merge adjacent inline-math runs
@@ -355,15 +448,15 @@ def _esc(s):
     """Escape raw LaTeX specials, but NOT inside math ($...$) and not in the figure ref/label. Also unicode-safe:
     a grounded caption can re-introduce raw unicode (Å, superscript-2, en-dash) that breaks compilation."""
     s = _fix_unicode_math(s or "")                      # convert / strip raw unicode (Å, ^2, en-dash, greek, ...)
-    spans, literal_dollars = [], []
-    s = re.sub(r"\\\$", lambda m: literal_dollars.append(m.group(0)) or
-               "\x00D%d\x00" % (len(literal_dollars) - 1), s)
+    spans = []
     # protect DISPLAY math (\begin{equation|align}, \[..\]) as well as inline $..$: an '_' or '^' there is a sub/
     # superscript, NOT a literal, so it must NOT be escaped (else \lambda_2 -> \lambda\_2 renders as a literal underscore).
-    s = re.sub(r"\\begin\{(equation|align|alignat|flalign|gather|multline|split|aligned|eqnarray|displaymath)\*?\}"
-               r".*?\\end\{\1\*?\}",
+    s = re.sub(r"\\begin\{(equation|align|displaymath)\*?\}.*?\\end\{\1\*?\}",
                lambda m: spans.append(m.group(0)) or f"\x00M{len(spans)-1}\x00", s, flags=re.S)
     s = re.sub(r"\\\[.*?\\\]", lambda m: spans.append(m.group(0)) or f"\x00M{len(spans)-1}\x00", s, flags=re.S)
+    s = re.sub(r"\\\(.*?\\\)", lambda m: spans.append(m.group(0)) or f"\x00M{len(spans)-1}\x00", s, flags=re.S)
+    # ^ \(...\) is inline math too: without this span, its '^' got escaped to \textasciicircum and shipped as
+    #   '10\textasciicircum{}{-6}' in a published Methods paragraph (v5, 2026-08-29).
     s = re.sub(r"\$[^$]*\$", lambda m: spans.append(m.group(0)) or f"\x00M{len(spans)-1}\x00", s)
     s = s.replace("$", "\\$")                           # any UNPAIRED $ left (e.g. a truncated equation) -> literal dollar, never opens math
     s = s.replace("fig:first_figure", "\x00FIG\x00")
@@ -378,23 +471,7 @@ def _esc(s):
     s = s.replace("\x00FIG\x00", "fig:first_figure")
     for i, sp in enumerate(spans):
         s = s.replace(f"\x00M{i}\x00", sp)
-    for i, literal in enumerate(literal_dollars):
-        s = s.replace("\x00D%d\x00" % i, literal)
     return s
-
-
-def _unescaped_dollar_positions(s):
-    out = []
-    for i, ch in enumerate(s or ""):
-        if ch != "$":
-            continue
-        slashes, j = 0, i - 1
-        while j >= 0 and s[j] == "\\":
-            slashes += 1
-            j -= 1
-        if slashes % 2 == 0:
-            out.append(i)
-    return out
 
 
 def _sanitize_body(s):
@@ -403,9 +480,8 @@ def _sanitize_body(s):
     s = re.sub(r"^\s*\\(?:section|subsection|paragraph|title)\*?\{[^{}]*\}\s*", "", s)
     s = re.sub(r"\\(?:begin|end)\{(?:abstract|document)\}", "", s)
     s = re.sub(r"\b(The|A|An|We|This|That|It|In|Of|To|And|Is|Are)\s+\1\b", r"\1", s)   # collapse accidental doubled words
-    dollars = _unescaped_dollar_positions(s)
-    if len(dollars) % 2:                                 # a truncated/dangling open-$ fragment -> drop from the last $ onward
-        s = s[:dollars[-1]].rstrip()
+    if s.count("$") % 2:                                # a truncated/dangling open-$ fragment -> drop from the last $ onward
+        s = s[:s.rfind("$")].rstrip()
     return _esc(s)
 
 
@@ -434,4 +510,5 @@ def _prune_empty_sections(tex):
     for a, b in reversed(cut):
         tex = tex[:a] + tex[b:]
     return tex
+
 
