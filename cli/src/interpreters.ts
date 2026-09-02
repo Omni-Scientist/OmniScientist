@@ -366,12 +366,16 @@ export function pythonPathPrefix(): string | null {
 export function withPythonPath(
   env: Record<string, string>,
 ): Record<string, string> {
+  // 中文区 Windows 的 python 默认按 GBK 开文件：脚本里 open() 不带 encoding 去读
+  // UTF-8 的 JSON 当场 UnicodeDecodeError（2026-09-02 evidence_cli 实录）。
+  // PYTHONUTF8=1 让所有 python 子进程进 UTF-8 模式，一举端掉这一类崩溃。
+  const utf8: Record<string, string> = { ...env, PYTHONUTF8: env.PYTHONUTF8 || "1" };
   const dir = pythonPathPrefix();
-  if (!dir) return env;
+  if (!dir) return utf8;
   // Windows 上环境变量名不分大小写，实际拿到的键可能是 Path 或 PATH
-  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
-  const current = env[key] ?? "";
-  return { ...env, [key]: current ? dir + delimiter + current : dir };
+  const key = Object.keys(utf8).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const current = utf8[key] ?? "";
+  return { ...utf8, [key]: current ? dir + delimiter + current : dir };
 }
 
 let pathPrefixKey: string | null = null;
