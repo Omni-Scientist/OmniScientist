@@ -1048,8 +1048,16 @@ async function installPython(data: string): Promise<boolean> {
   const match = /^pip (\d+)\.(\d+)/.exec(pipVersion.stdout.trim());
   const rawBar = match !== null && (Number(match[1]) > 25 || (Number(match[1]) === 25 && Number(match[2]) >= 1));
   const install = ["-u", "-m", "pip", "install", ...(rawBar ? ["--progress-bar", "raw"] : []), "-r", requirementsPath()];
-  if (!await run(py, install)) { note("装 python 依赖失败"); return false; }
-  return true;
+  // 大陆网络直连 pypi.org 经常拉不动。OMNISCI_PIP_INDEX 指定了就只用它；
+  // 没指定就先直连，失败自动换清华 TUNA 镜像再试一次。
+  const pipIndex = (process.env.OMNISCI_PIP_INDEX || "").trim();
+  if (await run(py, pipIndex ? [...install, "-i", pipIndex] : install)) return true;
+  if (!pipIndex) {
+    note("pip 直连失败，换清华镜像重试（pypi.tuna.tsinghua.edu.cn）");
+    if (await run(py, [...install, "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"])) return true;
+  }
+  note("装 python 依赖失败");
+  return false;
 }
 
 /** 下 tectonic 放进受管的 bin。上游没出这个平台的包时如实说明，不算失败。 */
@@ -1064,16 +1072,33 @@ async function installTectonic(data: string): Promise<boolean> {
       + "在那之前，一轮研究会停在 .tex，不出 PDF");
     return false;
   }
-  note(`下载 tectonic ${TECTONIC_VERSION}`);
-  let bytes: ArrayBuffer;
-  try {
-    const res = await fetch(target.url);
-    if (!res.ok) { note(`下载失败 HTTP ${res.status}`); return false; }
-    bytes = await res.arrayBuffer();
-  } catch (error) {
-    // 断网时 fetch 是抛不是返回非 ok。以前没接住，整个 bootstrap 掉进外层
-    // catch，日志里只剩一行「引导异常」，看不出是网络问题。
-    note(`下载失败 ${errorMessage(error)}`);
+  // 大陆网络直连 GitHub releases 经常失败。OMNISCI_TECTONIC_URL 指定了就只用它；
+  // 否则先直连，再按序走公共加速前缀。断网时 fetch 是抛不是返回非 ok，都要接住，
+  // 否则整个 bootstrap 掉进外层 catch，日志里只剩一行「引导异常」。
+  const override = (process.env.OMNISCI_TECTONIC_URL || "").trim();
+  const candidates = override ? [override] : [
+    target.url,
+    `https://ghfast.top/${target.url}`,
+    `https://mirror.ghproxy.com/${target.url}`,
+    `https://gh-proxy.com/${target.url}`,
+  ];
+  let bytes: ArrayBuffer | null = null;
+  for (const url of candidates) {
+    note(`下载 tectonic ${TECTONIC_VERSION}${url === target.url ? "" : "（镜像）"}`);
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+      if (!res.ok) { note(`下载失败 HTTP ${res.status}`); continue; }
+      const body = await res.arrayBuffer();
+      // 有些加速前缀出错时会拿 200 包一页 HTML；tectonic 的包不可能只有几百 KB。
+      if (body.byteLength < 5_000_000) { note(`下载内容异常（只有 ${Math.round(body.byteLength / 1024)} KB），换下一个源`); continue; }
+      bytes = body;
+      break;
+    } catch (error) {
+      note(`下载失败 ${errorMessage(error)}`);
+    }
+  }
+  if (!bytes) {
+    note("tectonic 所有下载源都失败。可设 OMNISCI_TECTONIC_URL 指到一个可达的镜像地址后重开");
     return false;
   }
   const archive = join(data, target.zip ? "tectonic.zip" : "tectonic.tar.gz");
