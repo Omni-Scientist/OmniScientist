@@ -30,6 +30,9 @@
       "minimumSystemVersion": "12.0"
     },
     "windows": {
+      "nsis": {
+        "installerIcon": "icons/installer.ico"
+      },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
