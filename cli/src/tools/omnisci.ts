@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import { safeChildEnvironment } from "../credentials.ts";
 import { pythonCommand, withPythonPath } from "../interpreters.ts";
@@ -153,6 +153,24 @@ function latestLedgerLine(root: string): { raw: string; entry: Record<string, un
   return { raw, entry };
 }
 
+/**
+ * 这条调用真正的 case 根：先信 dataPath（它自己就有 series.json 时），否则从
+ * 锚点文件（script/picks/sections）所在目录向上找最近一层带 series.json 的目录，
+ * 工作区根为界。没选数据目录或选歪时（2026-09-02 Windows 实录：空 dataPath 把
+ * --task 钉在工作区根，模型自建的 case 无法被工具指到，只能翻源码绕路），
+ * 模型把 case 建在哪，工具就跟到哪。
+ */
+function effectiveCase(ctx: ToolContext, anchor: string): string {
+  if (existsSync(join(ctx.caseRoot, "series.json"))) return ctx.caseRoot;
+  let probe = dirname(anchor);
+  while (probe === ctx.root || probe.startsWith(ctx.root + sep)) {
+    if (existsSync(join(probe, "series.json"))) return probe;
+    if (probe === ctx.root) break;
+    probe = dirname(probe);
+  }
+  return ctx.caseRoot;
+}
+
 async function record(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
   const requested = String(args.script ?? "");
   if (!requested) throw new Error("omnisci_record 需要 script");
@@ -161,13 +179,14 @@ async function record(args: Record<string, unknown>, ctx: ToolContext): Promise<
   if (!stat.isFile()) throw new Error(`分析脚本不是文件: ${requested}`);
   const argv = Array.isArray(args.argv) ? args.argv.map(String) : [];
   const timeoutSeconds = Math.min(Math.max(Number(args.timeout ?? 600) || 600, 1), 600);
+  const task = effectiveCase(ctx, script);
   const result = await runCli(
     "gate_cli.py",
-    ["record", "--task", ctx.caseRoot, "--script", script, "--timeout", String(timeoutSeconds), ...argv],
+    ["record", "--task", task, "--script", script, "--timeout", String(timeoutSeconds), ...argv],
     ctx,
     Math.min(MAX_TOOL_MS, (timeoutSeconds + 10) * 1000),
   );
-  const { raw, entry } = latestLedgerLine(ctx.caseRoot);
+  const { raw, entry } = latestLedgerLine(task);
   const receipt: OmniSciReceipt = {
     version: 1,
     operation: "record",
@@ -186,14 +205,15 @@ async function bib(args: Record<string, unknown>, ctx: ToolContext): Promise<str
   if (!requested) throw new Error("omnisci_bib 需要 picks");
   const picks = ctx.resolve(requested);
   if (!statSync(picks).isFile()) throw new Error(`picks 不是文件: ${requested}`);
+  const task = effectiveCase(ctx, picks);
   const result = await runCli(
     "lit_cli.py",
-    ["bib", "--task", ctx.caseRoot, "--picks", picks],
+    ["bib", "--task", task, "--picks", picks],
     ctx,
     180_000,
   );
-  const bibPath = join(ctx.caseRoot, "host", "references.bib");
-  const provenancePath = join(ctx.caseRoot, "host", "references.provenance.json");
+  const bibPath = join(task, "host", "references.bib");
+  const provenancePath = join(task, "host", "references.provenance.json");
   if (!existsSync(bibPath) || !existsSync(provenancePath)) {
     throw new Error("bib 成功返回，但引用或 provenance 文件缺失");
   }
@@ -280,12 +300,13 @@ async function compile(args: Record<string, unknown>, ctx: ToolContext): Promise
   if (!statSync(sections).isFile()) throw new Error(`sections 不是文件: ${requested}`);
   const authors = String(args.authors ?? "Anonymous");
   const name = String(args.name ?? "paper");
+  const task = effectiveCase(ctx, sections);
   let result;
   try {
     result = await runCli(
       "paper_cli.py",
       [
-        "compile", "--task", ctx.caseRoot, "--sections", sections, "--title", title,
+        "compile", "--task", task, "--sections", sections, "--title", title,
         "--authors", authors, "--name", name,
       ],
       ctx,
@@ -304,14 +325,14 @@ async function compile(args: Record<string, unknown>, ctx: ToolContext): Promise
     if (!/writing contract failed|prose words; expected/i.test(message)) throw e;
     let spec = "";
     try {
-      const c = await runCli("paper_cli.py", ["contract", "--task", ctx.caseRoot], ctx, 120_000);
+      const c = await runCli("paper_cli.py", ["contract", "--task", task], ctx, 120_000);
       spec = c.stdout.trim();
     } catch { /* 拿不到就不给，别把真正的错误盖掉 */ }
     throw spec
       ? new Error(`${message}\n\n[这个领域的写作契约原文]\n${spec}`)
       : e;
   }
-  const manifestPath = join(ctx.caseRoot, "host", `${name}.manifest.json`);
+  const manifestPath = join(task, "host", `${name}.manifest.json`);
   if (!existsSync(manifestPath)) throw new Error("compile 成功返回，但 paper manifest 不存在");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PaperManifest;
   const receipt: OmniSciReceipt = {
