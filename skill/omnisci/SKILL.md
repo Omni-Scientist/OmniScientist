@@ -125,6 +125,16 @@ sparse chart (a handful of bars or points) gets a smaller height, not a bigger c
 plots belong in one multi-panel row rather than two figures. Compile lint reports `fig_aspect` red on
 anything taller than these bands (col 0.58, wide 0.30 of the width).
 
+Check every figure with your own eyes before compiling: no clipped or colliding labels (a colorbar label
+printed over an axis label is a real failure seen in the wild), and never rainbow colormaps
+(viridis/plasma/jet); colour by a single-hue sequential ramp or a few discrete colours.
+
+Author figures at their FINAL printed size, not on a giant canvas: a single column prints ~3.4in wide
+(figsize about (3.4, 1.5), fonts 8-9pt), a both-columns figure ~7in. A 2000px canvas squeezed into one
+column shrinks its text several-fold and lint reports `fig_print_size` red. Include with
+`width=\linewidth`, and give side-by-side panels a both-columns figure rather than cramming them into one
+column.
+
 Then:
 
 ```bash

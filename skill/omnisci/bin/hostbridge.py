@@ -16,6 +16,13 @@ whole tool run to completion with `<<VISION:n>>` placeholders, which the host fi
 """
 import os, re, sys, json, types
 
+# Chinese-locale Windows opens files as GBK by default, so any CLI that reads a
+# UTF-8 JSON crashes with UnicodeDecodeError (seen live 2026-09-02). Re-exec once
+# into python's UTF-8 mode; every CLI imports this module first, so all are covered.
+if os.name == "nt" and not sys.flags.utf8_mode and os.environ.get("PYTHONUTF8") != "1":
+    os.environ["PYTHONUTF8"] = "1"
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REAL = os.path.dirname(os.path.realpath(__file__))          # the CLIs are reached through a symlink once the
 PLACEHOLDER = "<<VISION:%d>>"                               # skill is installed under ~/.claude/skills/

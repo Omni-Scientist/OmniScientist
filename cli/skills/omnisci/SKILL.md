@@ -143,7 +143,9 @@ success, and editing the script invalidates every result recorded from its old b
 never ground a paper; fix the script and record it successfully again.
 
 Call `view_image` on every analysis figure afterwards to confirm it is not blank, clipped, mislabeled, or
-misleading. Report a null result as a null result; a paper that honestly resolves nothing is acceptable, a
+misleading, and that no two labels collide (a colorbar label printed over an axis label is a real failure
+seen in the wild). Never use rainbow colormaps (viridis/plasma/jet); colour by a single-hue sequential
+ramp or a few discrete colours. Report a null result as a null result; a paper that honestly resolves nothing is acceptable, a
 paper that dresses a null as a discovery is not.
 
 Figure shape contract: a single-column figure prints WIDE and SHORT, height about 0.43x its width (think
@@ -151,6 +153,12 @@ Figure shape contract: a single-column figure prints WIDE and SHORT, height abou
 sparse chart (a handful of bars or points) gets a smaller height, not a bigger canvas, and two half-empty
 plots belong in one multi-panel row rather than two figures. Compile lint reports `fig_aspect` red on
 anything taller than these bands (col 0.58, wide 0.30 of the width).
+
+Author figures at their FINAL printed size, not on a giant canvas: a single column prints ~3.4in wide
+(figsize about (3.4, 1.5), fonts 8-9pt), a both-columns figure ~7in. A 2000px canvas squeezed into one
+column shrinks its text several-fold and lint reports `fig_print_size` red. Include with
+`width=\linewidth`, and give side-by-side panels a both-columns figure rather than cramming them into one
+column.
 
 ### 3. Get real references
 

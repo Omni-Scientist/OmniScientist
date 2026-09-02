@@ -263,8 +263,22 @@ def lint_paths(pdf_path, tex_path, bib_path=None, compile_log=None, fig_pdfs=Non
     # ---- per-figure source checks: banned colours, in-figure text size, serif fonts, width class
     fig_pdfs = sorted(fig_pdfs or [])
     col_pt, wide_pt = cfg["col_in"] * 72.0, cfg["wide_in"] * 72.0
-    banned_hits, size_bad, font_bad, aspect_bad = [], [], [], []
+    banned_hits, size_bad, font_bad, aspect_bad, print_bad = [], [], [], [], []
     fig_unreadable = []
+    # 光栅图的「画大印小」检查要知道每张图在 tex 里被放多宽（键不带扩展名：LaTeX 常省略）
+    placed = {}
+    for m in re.finditer(r"\\begin\{figure(\*?)\}(.*?)\\end\{figure\1\}", tex or "", re.S):
+        star, body = bool(m.group(1)), m.group(2)
+        for g in re.finditer(r"\\includegraphics\[([^\]]*)\]\{([^}]*)\}", body):
+            fac = re.search(r"width\s*=\s*([0-9.]*)\s*\\(?:line|column|text)width", g.group(1))
+            f = 1.0
+            if fac and fac.group(1):
+                try:
+                    f = float(fac.group(1))
+                except ValueError:
+                    pass
+            wide = star or bool(fac and "textwidth" in g.group(1))
+            placed[os.path.splitext(os.path.basename(g.group(2)))[0]] = (f, wide)
     for fp in fig_pdfs:
         try:
             fd = pymupdf.open(fp)
@@ -284,6 +298,37 @@ def lint_paths(pdf_path, tex_path, bib_path=None, compile_log=None, fig_pdfs=Non
                 cls, limit = ("wide", 0.30) if is_wide else ("col", 0.58)
             else:
                 cls, limit = "raster, col band assumed", 0.58
+                # pymupdf 给光栅页的 rect 是按图片自带 DPI 换算的物理尺寸（点），
+                # 除以 72 就是作者画它时的英寸宽。画 11.6 吋、印 2.95 吋 = 字号除以 4
+                # （2026-09-02 fig2 实录：四个点云面板缩成邮票）。缩水超过 1.8 倍就报。
+                fac, wide_flag = placed.get(os.path.splitext(os.path.basename(fp))[0], (1.0, False))
+                printed_in = max(0.1, fac) * (cfg["wide_in"] if wide_flag else cfg["col_in"])
+                shrink = (w / 72.0) / printed_in
+                # 1.3 倍是「没按印刷尺寸作图」的分界：9pt 字缩到 7pt 以下就开始费眼
+                # （1.8 的旧线放过了 1.76 倍的双面板图，2026-09-02 实录）。
+                if shrink > 1.3:
+                    print_bad.append("%s: drawn %.1fin wide, printed %.2fin (%.1fx shrink)"
+                                     % (os.path.basename(fp), w / 72.0, printed_in, shrink))
+                # 连续彩虹 colormap（viridis/plasma/jet）在光栅里躲过矢量的配色检查：
+                # 抽样像素做色相直方图，饱和像素铺满大半个色环就是彩虹渐变没跑。
+                try:
+                    import colorsys
+                    pix = pg.get_pixmap(dpi=24)
+                    n, data = pix.n, pix.samples
+                    bins, sat_px, total = [0] * 36, 0, 0
+                    for i in range(0, len(data) - n + 1, n * 3):
+                        r, gg, b = data[i] / 255.0, data[i + 1] / 255.0, data[i + 2] / 255.0
+                        total += 1
+                        hh, ss, vv = colorsys.rgb_to_hsv(r, gg, b)
+                        if ss > 0.35 and vv > 0.25:
+                            sat_px += 1
+                            bins[int(hh * 36) % 36] += 1
+                    occupied = sum(1 for c in bins if sat_px and c >= max(2, sat_px * 0.01))
+                    if total and sat_px / total >= 0.04 and occupied >= 16:
+                        banned_hits.append("%s: continuous rainbow colormap (hue sweep across %d/36 bins); "
+                                           "use a single-hue sequential instead" % (os.path.basename(fp), occupied))
+                except Exception:
+                    pass
             if h / w > limit:
                 aspect_bad.append("%s: h/w=%.2f (%s limit %.2f)" % (os.path.basename(fp), h / w, cls, limit))
         target = col_pt if abs(w - col_pt) < abs(w - wide_pt) else wide_pt
@@ -316,6 +361,10 @@ def lint_paths(pdf_path, tex_path, bib_path=None, compile_log=None, fig_pdfs=Non
     R["fig_fonts"] = {"ok": not font_bad, "detail": "; ".join(font_bad[:4]) or "all figure text serif (Times family)"}
     R["fig_aspect"] = {"ok": not aspect_bad, "detail": "; ".join(aspect_bad[:4])
                        or "all figures wide and short (col<=0.58, wide<=0.30 of width)"}
+    R["fig_print_size"] = {"ok": not print_bad,
+                           "detail": ("; ".join(print_bad[:4])
+                                      + " -- authored far larger than printed: author at the final size, or span figure*")
+                           if print_bad else "raster figures print near their authored size"}
 
     # ---- prose: DESCRIPTIVE result-number density in Results/Discussion/Conclusion paragraphs.
     #      <=3 per paragraph, no exemption. The old rule let ONE paragraph carry up to 10, which is
@@ -383,6 +432,36 @@ def lint_paths(pdf_path, tex_path, bib_path=None, compile_log=None, fig_pdfs=Non
     if not abs_txt.strip():
         abs_bad.append("no abstract found in the tex")
     R["abstract_sane"] = {"ok": not abs_bad, "detail": "; ".join(abs_bad) or "abstract free of stripper wreckage"}
+
+    # ---- abstract: headline numbers only. An abstract carrying a stats dump reads like a log line;
+    #      at most 3 non-year numbers belong there, the rest live in Results (2026-09-02: a plant paper
+    #      shipped 21 numbers in its abstract because this band only covered body paragraphs).
+    abs_nums = [t for t in re.findall(r"(?<![\w.])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?%?(?![\w.])", abs_txt)
+                if not re.fullmatch(r"(?:19|20)\d\d", t)]
+    R["abstract_numbers"] = {"ok": len(abs_nums) <= 3,
+                             "detail": ("%d numbers in the abstract (keep at most 3 headline results): %s"
+                                        % (len(abs_nums), ", ".join(abs_nums[:8]))) if len(abs_nums) > 3
+                             else "%d number(s) in the abstract" % len(abs_nums)}
+
+    # ---- prose + abstract: significant digits. 0.03361163 and 4.91017e-05 are instrument
+    #      readouts, not sentences; taste caps prose numbers at 4 significant digits, and a
+    #      tiny p-value reads as p < 1e-4 (house rule, 2026-09-02).
+    def _sig(tok):
+        mant = tok.lstrip("+-").rstrip("%").lower().split("e")[0]
+        if "." not in mant:
+            return len(mant.lstrip("0")) or 1
+        return len(mant.replace(".", "").lstrip("0")) or 1
+    fussy = []
+    for src in [abs_txt] + _prose_paragraphs(tex, results_only=False):
+        for tok in re.findall(r"(?<![\w.])[-+]?\d*\.\d+(?:[eE][-+]?\d+)?%?(?![\w.])"
+                              r"|(?<![\w.])[-+]?\d+[eE][-+]?\d+(?![\w.])", src or ""):
+            if _sig(tok) > 4:
+                fussy.append(tok)
+    fussy = sorted(set(fussy), key=len, reverse=True)
+    R["sig_figs"] = {"ok": not fussy,
+                     "detail": ("%d over-precise numbers in prose (round to <=4 significant digits; "
+                                "tiny p-values read as p < 1e-4): %s" % (len(fussy), ", ".join(fussy[:6])))
+                     if fussy else "prose numbers at sane precision"}
 
     # ---- figures: count, exemplar, referenced
     figs_in_tex = re.findall(r"\\begin\{figure\*?\}", tex)

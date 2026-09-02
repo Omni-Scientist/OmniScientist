@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { copyFileSync, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { caseHint as caseHintFor, normalizeDataPath as normalizeDataPathFor, snapToCase } from "./case-hint.ts";
 
 import { ApprovalPolicy } from "../../cli/src/approval.ts";
@@ -907,6 +908,54 @@ export const apiFetch = async (request: Request): Promise<Response> => {
         });
       } catch (error) {
         return json({ error: errorMessage(error) }, 404);
+      }
+    }
+
+    const saveMatch = /^\/api\/v1\/sessions\/([^/]+)\/artifacts\/([^/]+)\/save$/.exec(url.pathname);
+    if (request.method === "POST" && saveMatch) {
+      const id = decodeURIComponent(saveMatch[1]!);
+      const token = decodeURIComponent(saveMatch[2]!);
+      try {
+        const runtime = runtimes.get(id) ?? await createRuntime(id);
+        syncRuntimeArtifacts(runtime);
+        const file = runtime.artifactFiles.get(token);
+        if (!file) return json({ error: "没有这个会话产物" }, 404);
+        // Tauri 的 WebView 里 <a download> 是半残的（问一次权限然后杳无音信）。
+        // 下载改为原生落盘：拷进用户的「下载」文件夹，重名自动编号，然后在
+        // 文件管理器里选中亮出来，点一下立刻看到结果。
+        const downloads = join(homedir(), "Downloads");
+        const ext = extname(file.filename);
+        const stem = file.filename.slice(0, file.filename.length - ext.length);
+        let dest = join(downloads, file.filename);
+        for (let n = 2; existsSync(dest) && n < 100; n++) dest = join(downloads, `${stem} (${n})${ext}`);
+        copyFileSync(file.absolutePath, dest);
+        const revealArgv = process.platform === "darwin" ? ["open", "-R", dest]
+          : process.platform === "win32" ? ["explorer", `/select,${dest}`]
+          : ["xdg-open", downloads];
+        Bun.spawn(revealArgv, { stdout: "ignore", stderr: "ignore" });
+        return json({ ok: true, path: dest });
+      } catch (error) {
+        return json({ error: errorMessage(error) }, 500);
+      }
+    }
+
+    const openMatch = /^\/api\/v1\/sessions\/([^/]+)\/artifacts\/([^/]+)\/open$/.exec(url.pathname);
+    if (request.method === "POST" && openMatch) {
+      const id = decodeURIComponent(openMatch[1]!);
+      const token = decodeURIComponent(openMatch[2]!);
+      try {
+        const runtime = runtimes.get(id) ?? await createRuntime(id);
+        syncRuntimeArtifacts(runtime);
+        const file = runtime.artifactFiles.get(token);
+        if (!file) return json({ error: "没有这个会话产物" }, 404);
+        // Tauri 的 WebView 里 target=_blank 打不开任何东西；「打开」交给系统默认程序。
+        const argv = process.platform === "darwin" ? ["open", file.absolutePath]
+          : process.platform === "win32" ? ["cmd", "/c", "start", "", file.absolutePath]
+          : ["xdg-open", file.absolutePath];
+        Bun.spawn(argv, { stdout: "ignore", stderr: "ignore" });
+        return json({ ok: true });
+      } catch (error) {
+        return json({ error: errorMessage(error) }, 500);
       }
     }
 

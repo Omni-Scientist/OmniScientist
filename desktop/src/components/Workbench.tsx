@@ -11,6 +11,7 @@ import {
   Copy,
   Download,
   ExternalLink,
+  FileArchive,
   FileText,
   FlaskConical,
   Image as ImageIcon,
@@ -64,6 +65,22 @@ function artifactHref(artifact: Artifact) {
   if (artifact.fileUrl) return artifact.fileUrl;
   if (artifact.imageUrl) return artifact.imageUrl;
   return null;
+}
+
+/**
+ * 用系统默认程序打开产物。Tauri 的 WebView 里 target="_blank" 的链接是死的
+ * （没有接管新窗口请求，点了毫无反应），所以「打开」走网关的原生 open 端点。
+ */
+function openNative(href: string): void {
+  void fetch(href.replace(/\/content(\?.*)?$/, "/open"), { method: "POST" }).catch(() => undefined);
+}
+
+/**
+ * 存到「下载」文件夹。Tauri 的 WebView 里 <a download> 半残（问一次权限然后
+ * 杳无音信），改走网关原生落盘 + 文件管理器选中亮出。
+ */
+function saveNative(href: string): void {
+  void fetch(href.replace(/\/content(\?.*)?$/, "/save"), { method: "POST" }).catch(() => undefined);
 }
 
 function NotebookAction({
@@ -724,8 +741,8 @@ export function Workbench({
                         onFocus={() => focusArtifact(artifact.id)}
                         onRemove={() => onCloseArtifact(artifact.id)}
                         actions={href ? <>
-                          <a className="nb-action" href={href} download aria-label={t("下载 {0}", artifact.title)} title={t("下载 {0}", artifact.title)}><Download size={17} /></a>
-                          <a className="nb-action" href={href} target="_blank" rel="noreferrer" aria-label={t("在新窗口打开 {0}", artifact.title)} title={t("在新窗口打开 {0}", artifact.title)}><ExternalLink size={17} /></a>
+                          <button className="nb-action" type="button" onClick={() => saveNative(href)} aria-label={t("下载 {0}", artifact.title)} title={t("下载 {0}", artifact.title)}><Download size={17} /></button>
+                          <button className="nb-action" type="button" onClick={() => openNative(href)} aria-label={t("打开 {0}", artifact.title)} title={t("打开 {0}", artifact.title)}><ExternalLink size={17} /></button>
                         </> : null}
                       />
                       <FigureOutput artifact={artifact} />
@@ -750,9 +767,9 @@ export function Workbench({
                       onFocus={() => focusArtifact(artifact.id)}
                       onRemove={() => onCloseArtifact(artifact.id)}
                       actions={<>
-                        {artifact.bundleUrl ? <a className="nb-action" href={artifact.bundleUrl} download aria-label={t("下载 Overleaf 包")} title={t("下载 Overleaf 包")}><Download size={17} /></a> : null}
-                        {href ? <a className="nb-action" href={href} download aria-label={t("下载 {0}", artifact.title)} title={t("下载 {0}", artifact.title)}><Download size={17} /></a> : null}
-                        {href ? <a className="nb-action" href={href} target="_blank" rel="noreferrer" aria-label={t("打开 {0}", artifact.title)} title={t("打开 {0}", artifact.title)}><ExternalLink size={17} /></a> : null}
+                        {artifact.bundleUrl ? <button className="nb-action" type="button" onClick={() => saveNative(artifact.bundleUrl!)} aria-label={t("下载 Overleaf 包")} title={t("下载 Overleaf 包")}><FileArchive size={17} /></button> : null}
+                        {href ? <button className="nb-action" type="button" onClick={() => saveNative(href)} aria-label={t("下载 {0}", artifact.title)} title={t("下载 {0}", artifact.title)}><Download size={17} /></button> : null}
+                        {href ? <button className="nb-action" type="button" onClick={() => openNative(href)} aria-label={t("打开 {0}", artifact.title)} title={t("打开 {0}", artifact.title)}><ExternalLink size={17} /></button> : null}
                       </>}
                     />
                     <PaperOutput artifact={artifact} />

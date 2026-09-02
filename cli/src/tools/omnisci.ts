@@ -288,8 +288,12 @@ function lintNote(lint: PaperManifest["lint"]): string {
     + `empty; if a red truly must stay, say why in one sentence in your final summary.\n${lines.join("\n")}\n`
     + `Hints: refs_count -> search more subtopics with lit_cli.py, merge picks, rerun omnisci_bib. `
     + `number_density -> move grouped numbers into a table and keep at most 3 result numbers per paragraph `
-    + `of prose. fig_aspect -> figures print wide and short. overfull -> break long inline math or `
-    + `unbreakable strings.`;
+    + `of prose. abstract_numbers -> at most 3 headline numbers in the abstract, the rest belong in Results. `
+    + `sig_figs -> round prose numbers to at most 4 significant digits and write tiny p-values as p < 1e-4. `
+    + `fig_aspect -> figures print wide and short. fig_print_size -> author figures at their printed size `
+    + `(a huge canvas squeezed into a column prints unreadably small): single column is ~3.4in wide, `
+    + `full width is ~7in, use width=\\linewidth, and put side-by-side panels in a figure* instead. `
+    + `overfull -> break long inline math or unbreakable strings.`;
 }
 
 async function compile(args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
