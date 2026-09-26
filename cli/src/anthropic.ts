@@ -49,6 +49,17 @@ const BINDING_CHECKED = /^claude-(opus-5-5|fable-5-1)/;
 const BINDING_BETA = "thinking-binding-controls-2026-08-01";
 
 /**
+ * 被安全分类器误拒时，服务端在同一个请求里换个模型接着答（"default" 按拒答类别选替补）。
+ * 2026-09-27 实测：Opus 5.5 把一道普通的查表题判成 cyber，最朴素的请求连拒三次。不兜底的话
+ * 这一轮就停了，论文跑到一半断掉。没被拒时不起作用、不多花钱；换了模型的那一轮缓存接不上
+ * （缓存按模型分），按全价算一次。
+ * 能配的模型是 /v1/models 里 allowed_fallback_models 非空的，同日查得：opus-5、opus-5-5、
+ * fable-5、fable-5-1；sonnet-5 是空的，给它发这个参数只会 400。
+ */
+const FALLBACK_CAPABLE = /^claude-(opus-5|fable-5)/;
+const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+/**
  * PROVIDERS.anthropic.baseURL 是给 OpenAI SDK 用的，带着 /v1/；原生 SDK 自己拼
  * /v1/messages，不去掉就会打到 /v1/v1/messages 上 404。
  */
@@ -272,6 +283,8 @@ export async function streamNative(
     : undefined;
   // 这几个模型不写 thinking 也是 adaptive，显式写出来是为了带上 block_binding，思考行为不变。
   const binding = BINDING_CHECKED.test(opts.model);
+  const fallback = FALLBACK_CAPABLE.test(opts.model);
+  const betas = [...(binding ? [BINDING_BETA] : []), ...(fallback ? [FALLBACK_BETA] : [])];
 
   const stream = await client.beta.messages.create({
     model: opts.model,
@@ -280,12 +293,11 @@ export async function streamNative(
     ...(system ? { system } : {}),
     ...(req.tools.length ? { tools: req.tools } : {}),
     ...(opts.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
+    ...(betas.length ? { betas } : {}),
     ...(binding
-      ? {
-          betas: [BINDING_BETA],
-          thinking: { type: "adaptive" as const, block_binding: { prefix_mismatch_behavior: "drop_block" as const } },
-        }
+      ? { thinking: { type: "adaptive" as const, block_binding: { prefix_mismatch_behavior: "drop_block" as const } } }
       : {}),
+    ...(fallback ? { fallbacks: "default" as const } : {}),
     stream: true,
   }, signal ? { signal } : undefined);
 
@@ -293,6 +305,8 @@ export async function streamNative(
   const acc = new Map<number, { id: string; name: string; args: string }>();
   // 按块序号记，流结束后按序号排出原始顺序。
   const blocks = new Map<number, Skeleton[number]>();
+  // 最后一个 fallback 块的序号。它前面是被拒那个模型的半截输出。
+  let boundary = -1;
   let stopReason: string | null = null;
   let input = 0;
   let cacheWrite = 0;
@@ -320,6 +334,9 @@ export async function streamNative(
           blocks.set(event.index, { kind: "thinking", block: { type: "thinking", thinking: cb.thinking ?? "", signature: cb.signature ?? "" } });
         } else if (cb.type === "redacted_thinking") {
           blocks.set(event.index, { kind: "thinking", block: { type: "redacted_thinking", data: cb.data } });
+        } else if (cb.type === "fallback") {
+          boundary = event.index;
+          console.error(`[omnisci] ${cb.from.model} 拒答了这一轮，服务端改由 ${cb.to.model} 接着答。`);
         }
         break;
       }
@@ -351,6 +368,15 @@ export async function streamNative(
         break;
       }
     }
+  }
+
+  // 中途被拒、换了模型：被拒那段里的工具调用不能执行，它的 thinking 也不能回传（官方规矩：
+  // fallback 块之前的 thinking / tool_use 回传时一律去掉）。只有正文留着，替补模型是接着它往下写的。
+  for (const index of [...blocks.keys()]) {
+    if (index < boundary && blocks.get(index)!.kind !== "text") blocks.delete(index);
+  }
+  for (const index of [...acc.keys()]) {
+    if (index < boundary) acc.delete(index);
   }
 
   // acc 按块序号记，text / thinking 块也占序号，所以这里重排成 0,1,2… 交出去，

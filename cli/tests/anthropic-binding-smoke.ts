@@ -96,3 +96,12 @@ console.log(`drop_block 模式照常返回，服务端报告：${JSON.stringify(
 
 const turn = await model.streamTurn(compacted, tools);
 console.log(`OK 桌面版这条路照常返回：finish=${turn.finishReason} 正文=${JSON.stringify(turn.message.content)}`);
+
+// 压缩之后缓存还接不接得上：再接着聊两轮，看每轮读到多少缓存。
+compacted.push(turn.message);
+for (const ask of ["Say the value again.", "And once more."]) {
+  compacted.push({ role: "user", content: ask });
+  const next = await model.streamTurn(compacted, tools);
+  compacted.push(next.message);
+  console.log(`压缩后续聊：prompt=${next.usage.promptTokens} cached=${next.usage.cachedTokens}`);
+}
