@@ -36,6 +36,7 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## 动态
 
+- 🚀 **2026-09-27** · **v0.2.2 发布。** Claude 改走 Anthropic 原生接口并开启提示缓存，长任务花费大幅下降；模型误拒时自动换一个 Claude 模型接着跑。 *([v0.2.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.2))*
 - 🚀 **2026-09-02** · **v0.2.1 发布。** 全新的桌面版，欢迎使用。 *([v0.2.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.1))*
 - 📚 **2026-09-02** · **Awesome AI Scientist。** 我们发布了一个面向 AI scientist 的合集 [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist)，收录论文、系统、工作台、评测和数据集。
 - 🌍 **2026-08-24** · **多语言支持。** 工作台界面和本页面都有多种语言，页面顶部可切换，软件里在工具栏切换。*([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*

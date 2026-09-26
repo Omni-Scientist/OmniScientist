@@ -36,6 +36,7 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## Neuigkeiten
 
+- 🚀 **2026-09-27** · **v0.2.2 veröffentlicht.** Claude läuft jetzt über die native Anthropic-API mit Prompt-Caching, lange Läufe werden dadurch deutlich günstiger; abgelehnte Anfragen übernimmt automatisch ein anderes Claude-Modell. *([v0.2.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.2))*
 - 🚀 **2026-09-02** · **v0.2.1 veröffentlicht.** Die rundum neue Desktop-App ist da. Viel Spaß! *([v0.2.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.1))*
 - 📚 **2026-09-02** · **Awesome AI Scientist.** Wir haben eine Sammlung für AI Scientists unter [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist) veröffentlicht, mit Arbeiten, Systemen, Workbenches, Benchmarks und Datensätzen.
 - 🌍 **2026-08-24** · **Mehrsprachige Unterstützung.** Die Benutzeroberfläche des Arbeitsbereichs und diese Seite sind beide in mehreren Sprachen verfügbar, die oben auf dieser Seite aufgeführt und über die Symbolleiste in der App umgeschaltet werden. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*

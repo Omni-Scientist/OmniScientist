@@ -36,6 +36,7 @@ https://github.com/user-attachments/assets/02477c18-28ff-4aad-a6bd-b54c6f032bc8
 
 ## 소식
 
+- 🚀 **2026-09-27** · **v0.2.2 출시.** Claude가 Anthropic 네이티브 API와 프롬프트 캐싱으로 실행되어 긴 작업의 비용이 크게 줄었습니다. 요청이 잘못 거부되면 다른 Claude 모델이 이어서 답합니다. *([v0.2.2](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.2))*
 - 🚀 **2026-09-02** · **v0.2.1 출시.** 완전히 새로워진 데스크톱 앱을 만나보세요. *([v0.2.1](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.2.1))*
 - 📚 **2026-09-02** · **Awesome AI Scientist.** AI scientist를 위한 컬렉션 [Omni-Scientist/Awesome-AI-Scientist](https://github.com/Omni-Scientist/Awesome-AI-Scientist)을 공개했습니다. 논문, 시스템, 워크벤치, 벤치마크, 데이터셋을 담았습니다.
 - 🌍 **2026-08-24** · **다국어 지원.** 작업 영역 인터페이스와 이 페이지 모두 여러 언어로 제공됩니다. 언어는 이 페이지 상단에 나열되어 있으며, 앱의 도구 모음에서 전환할 수 있습니다. *([v0.1.3](https://github.com/Omni-Scientist/OmniScientist/releases/tag/v0.1.3))*
