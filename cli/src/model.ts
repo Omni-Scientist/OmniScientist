@@ -8,8 +8,10 @@
  * 不静默重试、不降级到「看起来正常」。
  */
 
+import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
+import { nativeBaseURL, streamNative } from "./anthropic.ts";
 import { credentialFor } from "./credentials.ts";
 
 /**
@@ -22,6 +24,8 @@ import { credentialFor } from "./credentials.ts";
  *   OpenAI 兼容代理 / Claude 系  0%        1.2-2.5s    cache_control 透传不过去，加了也没用
  *
  * 结论：走代理转发 Claude 的话，缓存是拿不到的，长前缀任务要么直连要么认了这个成本。
+ * Anthropic 官方的 OpenAI 兼容端点同样不缓存（2026-09-26 实测），所以 anthropic 通道
+ * 不走这里的 OpenAI 客户端，改走原生接口，见 anthropic.ts。
  */
 export const PROVIDERS = {
   deepseek: {
@@ -38,6 +42,7 @@ export const PROVIDERS = {
     keyEnvs: ["OMNISCI_API_KEY"],
     defaultModel: process.env.OMNISCI_MODEL || "",
   },
+  // 实际请求走原生 /v1/messages（anthropic.ts），这个地址只用来显示和推出原生地址。
   anthropic: {
     baseURL: "https://api.anthropic.com/v1/",
     keyEnvs: ["ANTHROPIC_API_KEY"],
@@ -477,7 +482,10 @@ export class ModelClient {
   /** 只由构造函数和 reconfigure() 写，外面当只读的看。 */
   provider!: ProviderName;
   model!: string;
+  /** anthropic 通道不建它，走 native。 */
   private client!: OpenAI;
+  /** 只有 anthropic 通道有，见 anthropic.ts。 */
+  private native: Anthropic | null = null;
   private maxTokens!: number;
   private effort?: string;
 
@@ -515,6 +523,18 @@ export class ModelClient {
     this.maxTokens = opts.maxTokens ?? 8000;
     this.effort = opts.effort;
     // maxRetries: 0，网络层的静默重试也是一种吞错，出问题要立刻看见
+    if (provider === "anthropic") {
+      this.native = new Anthropic({
+        baseURL: nativeBaseURL(opts.baseURL || conf.baseURL),
+        apiKey: key,
+        // 不给 null 的话 SDK 会自己去读 ANTHROPIC_AUTH_TOKEN，跟 key 一起发出去。
+        authToken: null,
+        timeout: 180_000,
+        maxRetries: 0,
+      });
+      return;
+    }
+    this.native = null;
     this.client = new OpenAI({
       baseURL: opts.baseURL || conf.baseURL,
       apiKey: key,
@@ -553,6 +573,8 @@ export class ModelClient {
   }
 
   async discoverContextWindow(): Promise<number | null> {
+    // Anthropic 的 /v1/models 不给 max_model_len，以前走兼容端点时这里也是 null。
+    if (this.native) return null;
     try {
       const list = await this.client.models.list();
       for (const m of list.data ?? []) {
@@ -572,6 +594,11 @@ export class ModelClient {
     onText?: (chunk: string) => void,
     signal?: AbortSignal,
   ): Promise<Turn> {
+    if (this.native) {
+      const t = await this.nativeTurn(messages, tools, onText, signal);
+      return this.assemble(t.parts, t.acc, t.finishReason, t.usage, tools);
+    }
+
     const send = (cap: number) => this.client.chat.completions.create({
       model: this.model,
       messages: messages as never,
@@ -666,6 +693,49 @@ export class ModelClient {
       }
     }
 
+    return this.assemble(parts, acc, finishReason, usage, tools);
+  }
+
+  /**
+   * Claude 走原生接口。缓存只给带工具的多轮循环开，看图、摘要这类一次性调用
+   * 读不回来，开了只是多付写入价。
+   */
+  private async nativeTurn(
+    messages: unknown[],
+    tools: unknown[],
+    onText?: (chunk: string) => void,
+    signal?: AbortSignal,
+  ) {
+    try {
+      return await streamNative(
+        this.native!,
+        { model: this.model, maxTokens: this.maxTokens, cache: tools.length > 0 },
+        messages, tools, onText, signal,
+      );
+    } catch (error) {
+      // 输入超窗口时原生接口的原话：prompt is too long: N tokens > M maximum。
+      // 翻成 ContextOverflowError，AgentLoop 会强制压缩一轮再试，跟别家通道同一条路。
+      if (error instanceof Anthropic.BadRequestError) {
+        const over = /prompt is too long:\s*(\d+)\s*tokens\s*>\s*(\d+)\s*maximum/i.exec(error.message);
+        if (over) {
+          throw new ContextOverflowError(
+            `输入已经超过模型窗口：${over[1]} tokens，上限 ${over[2]}。\n  原始报错：${error.message}`,
+            Number(over[2]),
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** 两条通道收回来的原料组装成一条 assistant 消息。工具参数的校验规矩只此一份。 */
+  private assemble(
+    parts: string[],
+    acc: Map<number, { id: string; name: string; args: string }>,
+    finishReason: string | null,
+    usage: Usage,
+    tools: unknown[],
+  ): Turn {
     let truncatedToolCall = false;
     const raw = parts.join("");
     const visible = stripReasoning(raw);

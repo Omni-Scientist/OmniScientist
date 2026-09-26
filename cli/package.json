@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "@resvg/resvg-js": "^2.6.2",
     "ink": "^5.1.0",
     "ink-text-input": "^6.0.0",
