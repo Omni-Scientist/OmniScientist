@@ -8,6 +8,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 
+import { toNativeRequest } from "../src/anthropic.ts";
 import { ApprovalPolicy } from "../src/approval.ts";
 import { AgentLoop, type Presenter } from "../src/loop.ts";
 import { ModelClient, type Turn } from "../src/model.ts";
@@ -73,6 +74,10 @@ if (!later.every((u) => u.cachedTokens > 0)) throw new Error("第 2 轮起有一
 if (!later.every((u, i) => i === 0 || u.cachedTokens >= later[i - 1]!.cachedTokens)) {
   throw new Error("缓存读数没有一路涨，前缀在中途被改了");
 }
+const replayed = toNativeRequest(messages, []).messages
+  .flatMap((m) => (m.role === "assistant" ? m.content as Array<{ type: string }> : []))
+  .filter((b) => b.type === "thinking" || b.type === "redacted_thinking").length;
+console.log(`回传的 thinking 块：${replayed}`);
 const sent = turns.reduce((s, u) => s + u.promptTokens, 0);
 const cached = turns.reduce((s, u) => s + u.cachedTokens, 0);
 console.log(`OK ${modelId}: ${turns.length} 轮，发出 ${sent} token，其中缓存命中 ${cached}（${Math.round(100 * cached / sent)}%）`);

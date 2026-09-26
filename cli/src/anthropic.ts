@@ -15,8 +15,38 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Usage } from "./model.ts";
 
 type Json = Record<string, unknown>;
-type Block = Anthropic.ContentBlockParam;
-type ImageMime = Anthropic.Base64ImageSource["media_type"];
+type Block = Anthropic.Beta.BetaContentBlockParam;
+type Thinking = Anthropic.Beta.BetaThinkingBlockParam | Anthropic.Beta.BetaRedactedThinkingBlockParam;
+type ImageMime = Anthropic.Beta.BetaBase64ImageSource["media_type"];
+
+/**
+ * 一条 assistant 回复里各块的原始顺序：thinking 原样存下，正文存原文，工具调用只记 id。
+ *
+ * thinking 块必须原样、按原来的位置传回去（SDK 类型注释原话：passed back unmodified and
+ * in their original order）。开了交错思考的模型会在两次工具调用之间再想一段，所以不能
+ * 一股脑全堆到开头。正文和工具调用在回放时从当前那条消息取，不用这里存的值。
+ */
+type Skeleton = Array<{ kind: "thinking"; block: Thinking } | { kind: "text"; text: string } | { kind: "tool"; id: string }>;
+
+/**
+ * 按消息对象记，不往消息里加字段：消息会原样发给别家通道、塞进压缩摘要、写进桌面版存档，
+ * 多一个字段哪儿都可能出事。桌面版重启后消息是从磁盘重建的新对象，这里查不到，
+ * 就是不回传 thinking，原生接口照样接受。
+ */
+const skeletons = new WeakMap<object, Skeleton>();
+
+export function rememberSkeleton(message: object, skeleton: Skeleton): void {
+  if (skeleton.some((e) => e.kind === "thinking")) skeletons.set(message, skeleton);
+}
+
+/**
+ * thinking 块跟产生它的那段对话绑定：它前面的 system、工具和每一条消息都得跟当时一字不差，
+ * 否则算改过历史。桌面版的上下文压缩是「前面换成摘要、最近几轮原样保留」，保留下来那几轮的
+ * thinking 前面就变了。会查这一条的模型（Opus 5.5、Fable 5.1），在 2026-08-31 之后注册的
+ * 账号上默认直接 400。drop_block 让服务端把对不上的块丢掉、请求照常跑，只少了那几段思路。
+ */
+const BINDING_CHECKED = /^claude-(opus-5-5|fable-5-1)/;
+const BINDING_BETA = "thinking-binding-controls-2026-08-01";
 
 /**
  * PROVIDERS.anthropic.baseURL 是给 OpenAI SDK 用的，带着 /v1/；原生 SDK 自己拼
@@ -39,7 +69,7 @@ function textOf(content: unknown): string {
     .join("");
 }
 
-function imageBlock(part: Json): Anthropic.ImageBlockParam {
+function imageBlock(part: Json): Anthropic.Beta.BetaImageBlockParam {
   const url = String((part.image_url as Json | undefined)?.url ?? "");
   const data = /^data:([^;,]+);base64,(.*)$/s.exec(url);
   if (data) {
@@ -76,10 +106,47 @@ function toolInput(raw: string): Json {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
 }
 
+type Call = { id: string; function: { name: string; arguments: string } };
+
+function toolUse(call: Call): Block {
+  return { type: "tool_use", id: call.id, name: call.function.name, input: toolInput(call.function.arguments) };
+}
+
+/**
+ * assistant 消息转成原生块。记过原始顺序的，thinking 放回原位；正文没被改过就按原来的
+ * 分块放，改过（剥了推理标签之类）就整段放在第一个正文的位置；被丢掉的工具调用跳过。
+ */
+function assistantBlocks(m: Json): Block[] {
+  const text = textOf(m.content);
+  const calls = (m.tool_calls ?? []) as Call[];
+  const skeleton = skeletons.get(m);
+  if (!skeleton) return [...textBlock(text), ...calls.map(toolUse)];
+
+  const byId = new Map(calls.map((c) => [c.id, c]));
+  const recorded = skeleton.flatMap((e) => (e.kind === "text" ? [e.text] : [])).join("");
+  const textIntact = recorded.trim() === text.trim();
+  let textPlaced = false;
+  const out: Block[] = [];
+  for (const e of skeleton) {
+    if (e.kind === "thinking") out.push(e.block);
+    else if (e.kind === "text") {
+      if (textIntact) out.push(...textBlock(e.text));
+      else if (!textPlaced) { out.push(...textBlock(text)); textPlaced = true; }
+    } else {
+      const call = byId.get(e.id);
+      if (call) { out.push(toolUse(call)); byId.delete(e.id); }
+    }
+  }
+  if (!textIntact && !textPlaced) out.push(...textBlock(text));
+  for (const call of byId.values()) out.push(toolUse(call));
+  // 只剩 thinking 没有正文和工具调用的，发出去会被当成没说完的 assistant 前缀填充。
+  return out.some((b) => b.type !== "thinking" && b.type !== "redacted_thinking") ? out : [];
+}
+
 export interface NativeRequest {
   system: string;
-  messages: Anthropic.MessageParam[];
-  tools: Anthropic.Tool[];
+  messages: Anthropic.Beta.BetaMessageParam[];
+  tools: Anthropic.Beta.BetaTool[];
 }
 
 /**
@@ -90,13 +157,11 @@ export interface NativeRequest {
  * - tool 消息变成 user 消息里的 tool_result；连着的几条并进同一条 user 消息，
  *   并行调用的回执必须放在一起，拆开会让模型学会不再并行。
  * - 同一角色连续出现就合并，保证 user / assistant 交替。
- * - 不回传 thinking 块。兼容端点本来就回传不了，这里保持原样：桌面版的上下文压缩
- *   是「摘要 + 保留最近几轮」，回传 thinking 的话，保留下来那几轮在 2026-08-31
- *   之后注册的账号上会被判成改过历史，直接 400。
+ * - assistant 消息带着它当时的 thinking 块原样回传，见 assistantBlocks。
  */
 export function toNativeRequest(messages: unknown[], tools: unknown[]): NativeRequest {
   const system: string[] = [];
-  const out: Anthropic.MessageParam[] = [];
+  const out: Anthropic.Beta.BetaMessageParam[] = [];
 
   const push = (role: "user" | "assistant", blocks: Block[]) => {
     if (!blocks.length) return;
@@ -117,16 +182,11 @@ export function toNativeRequest(messages: unknown[], tools: unknown[]): NativeRe
       case "user":
         push("user", partsToBlocks(m.content));
         break;
-      case "assistant": {
-        const blocks: Block[] = textBlock(textOf(m.content));
-        for (const call of (m.tool_calls ?? []) as Array<{ id: string; function: { name: string; arguments: string } }>) {
-          blocks.push({ type: "tool_use", id: call.id, name: call.function.name, input: toolInput(call.function.arguments) });
-        }
-        push("assistant", blocks);
+      case "assistant":
+        push("assistant", assistantBlocks(m));
         break;
-      }
       case "tool": {
-        const content = partsToBlocks(m.content) as Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>;
+        const content = partsToBlocks(m.content) as Array<Anthropic.Beta.BetaTextBlockParam | Anthropic.Beta.BetaImageBlockParam>;
         push("user", [{
           type: "tool_result",
           tool_use_id: String(m.tool_call_id),
@@ -151,7 +211,7 @@ export function toNativeRequest(messages: unknown[], tools: unknown[]): NativeRe
       return {
         name: String(fn.name),
         description: String(fn.description ?? ""),
-        input_schema: { ...((fn.parameters ?? {}) as Json), type: "object" } as Anthropic.Tool.InputSchema,
+        input_schema: { ...((fn.parameters ?? {}) as Json), type: "object" } as Anthropic.Beta.BetaTool.InputSchema,
         // 工具参数边生成边流回来。写整篇 tex 那种大参数不开的话，服务端要攒完才一次性吐。
         // 开了之后服务端不再校验参数 JSON，而 model.ts 本来就会自己验、坏了告诉模型。
         eager_input_streaming: true,
@@ -174,6 +234,8 @@ export interface NativeTurn {
   acc: Map<number, { id: string; name: string; args: string }>;
   finishReason: string | null;
   usage: Usage;
+  /** 交给 rememberSkeleton，等组装好的消息进了历史，下一轮回传用。 */
+  skeleton: Skeleton;
 }
 
 export interface NativeOptions {
@@ -208,19 +270,29 @@ export async function streamNative(
       ? [{ type: "text" as const, text: req.system, cache_control: { type: "ephemeral" as const } }]
       : req.system
     : undefined;
+  // 这几个模型不写 thinking 也是 adaptive，显式写出来是为了带上 block_binding，思考行为不变。
+  const binding = BINDING_CHECKED.test(opts.model);
 
-  const stream = await client.messages.create({
+  const stream = await client.beta.messages.create({
     model: opts.model,
     max_tokens: opts.maxTokens,
     messages: req.messages,
     ...(system ? { system } : {}),
     ...(req.tools.length ? { tools: req.tools } : {}),
     ...(opts.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
+    ...(binding
+      ? {
+          betas: [BINDING_BETA],
+          thinking: { type: "adaptive" as const, block_binding: { prefix_mismatch_behavior: "drop_block" as const } },
+        }
+      : {}),
     stream: true,
   }, signal ? { signal } : undefined);
 
   const parts: string[] = [];
   const acc = new Map<number, { id: string; name: string; args: string }>();
+  // 按块序号记，流结束后按序号排出原始顺序。
+  const blocks = new Map<number, Skeleton[number]>();
   let stopReason: string | null = null;
   let input = 0;
   let cacheWrite = 0;
@@ -237,20 +309,37 @@ export async function streamNative(
         output = u.output_tokens ?? 0;
         break;
       }
-      case "content_block_start":
-        if (event.content_block.type === "tool_use") {
-          acc.set(event.index, { id: event.content_block.id, name: event.content_block.name, args: "" });
+      case "content_block_start": {
+        const cb = event.content_block;
+        if (cb.type === "tool_use") {
+          acc.set(event.index, { id: cb.id, name: cb.name, args: "" });
+          blocks.set(event.index, { kind: "tool", id: cb.id });
+        } else if (cb.type === "text") {
+          blocks.set(event.index, { kind: "text", text: cb.text ?? "" });
+        } else if (cb.type === "thinking") {
+          blocks.set(event.index, { kind: "thinking", block: { type: "thinking", thinking: cb.thinking ?? "", signature: cb.signature ?? "" } });
+        } else if (cb.type === "redacted_thinking") {
+          blocks.set(event.index, { kind: "thinking", block: { type: "redacted_thinking", data: cb.data } });
         }
         break;
-      case "content_block_delta":
-        if (event.delta.type === "text_delta") {
-          parts.push(event.delta.text);
-          onText?.(event.delta.text);
-        } else if (event.delta.type === "input_json_delta") {
-          const slot = acc.get(event.index);
-          if (slot) slot.args += event.delta.partial_json;
+      }
+      case "content_block_delta": {
+        const slot = blocks.get(event.index);
+        const d = event.delta;
+        if (d.type === "text_delta") {
+          parts.push(d.text);
+          onText?.(d.text);
+          if (slot?.kind === "text") slot.text += d.text;
+        } else if (d.type === "input_json_delta") {
+          const call = acc.get(event.index);
+          if (call) call.args += d.partial_json;
+        } else if (slot?.kind === "thinking" && slot.block.type === "thinking") {
+          if (d.type === "thinking_delta") slot.block.thinking += d.thinking;
+          // 签名在块结束前一次给全，是整值不是增量。
+          else if (d.type === "signature_delta") slot.block.signature = d.signature;
         }
         break;
+      }
       case "message_delta": {
         stopReason = event.delta.stop_reason ?? stopReason;
         const u = event.usage;
@@ -267,6 +356,7 @@ export async function streamNative(
   // acc 按块序号记，text / thinking 块也占序号，所以这里重排成 0,1,2… 交出去，
   // 跟 OpenAI 流里 tool_calls 的 index 同一个口径。
   const calls = new Map([...acc.values()].map((slot, i) => [i, slot]));
+  const skeleton = [...blocks.entries()].sort(([a], [b]) => a - b).map(([, e]) => e);
 
   return {
     parts,
@@ -280,5 +370,6 @@ export async function streamNative(
       cachedTokens: cacheRead,
       cost: 0,
     },
+    skeleton,
   };
 }

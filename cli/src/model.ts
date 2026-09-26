@@ -11,7 +11,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
-import { nativeBaseURL, streamNative } from "./anthropic.ts";
+import { nativeBaseURL, rememberSkeleton, streamNative } from "./anthropic.ts";
 import { credentialFor } from "./credentials.ts";
 
 /**
@@ -596,7 +596,9 @@ export class ModelClient {
   ): Promise<Turn> {
     if (this.native) {
       const t = await this.nativeTurn(messages, tools, onText, signal);
-      return this.assemble(t.parts, t.acc, t.finishReason, t.usage, tools);
+      const turn = this.assemble(t.parts, t.acc, t.finishReason, t.usage, tools);
+      rememberSkeleton(turn.message, t.skeleton);
+      return turn;
     }
 
     const send = (cap: number) => this.client.chat.completions.create({
